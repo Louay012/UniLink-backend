@@ -1,0 +1,513 @@
+================================================================================
+FACULTY CONTACT & COMMUNICATION PLATFORM
+Project 4 - Final Specification & Requirements
+Date: 20 March 2026
+================================================================================
+
+
+1. APP IDENTITY & SCOPE
+================================================================================
+
+Project: Contact Platform for Students and Coordinators (Project 4)
+Purpose: Secure, role-based communication and contact hub for faculty users.
+
+The app is:
+- A centralized platform for connecting students, teachers, and coordinators.
+- Built to publish official information clearly and organize communication by role.
+- Focused on internal faculty communication, not external features.
+
+The app is NOT:
+- An exam-management system (Project 2).
+- A PFE (end-of-year project) workflow system (Project 1).
+- A results/jury/reclamation system (Project 3).
+- An alumni network (Project 5).
+- A club/project management system (Project 6/7).
+- A room/material reservation system (Project 8).
+- A full learning management system (LMS) with courses, assignments, live classes.
+
+Scope Principle: Communication, contact, and institutional announcements only.
+
+
+2. USERS & ROLES
+================================================================================
+
+Four user roles:
+
+A) STUDENT
+- Can enroll in courses/classes.
+- Receives course and global announcements.
+- Can send private messages to teachers and coordinators.
+- Cannot message other students directly.
+- Access to course materials and class group chats.
+- Can view directory of teachers/coordinators (with visibility limits).
+
+B) TEACHER
+- Publishes course-level announcements and materials.
+- Can message students (in courses they teach).
+- Can message coordinators and other teachers (private or staff groups).
+- Access to course chat spaces.
+- Can submit global announcements for admin approval.
+
+C) COORDINATOR
+- Official class-level authority and communication leader.
+- Publishes global announcements with targeted audience selection (no prior approval required).
+- Publishes important class-wide administrative information (schedules, urgent notices, official outcomes).
+- Can message students and teachers.
+- Supervises class group communication.
+- Owns one class as the responsible authority.
+
+D) ADMINISTRATOR
+- Manages system users, roles, and permissions.
+- Configures override policies (see section below).
+- Manages staff groups and system settings.
+- Can publish both course and global announcements directly.
+- Can audit communication (audit scope deferred).
+
+
+3. ANNOUNCEMENTS MODEL
+================================================================================
+
+A) COURSE ANNOUNCEMENTS
+Location: Inside each course/class page, under "Announcements" tab.
+Published by: Teachers (of that course).
+Automatic visibility: All enrolled students + the course teacher.
+No audience targeting: Not needed (membership = automatic visibility).
+Content supported:
+- Title and description.
+- Attachments (PDFs, documents, links).
+- Course-related details.
+- Pinned important notices.
+
+B) GLOBAL ANNOUNCEMENTS
+Location: Central announcements module (main page/tab).
+Published by:
+- Coordinators: can publish directly.
+- Teachers: can create global announcement drafts, then publish only after admin approval.
+- Admin: can publish directly.
+Audience targeting (REQUIRED):
+- All students (faculty-wide).
+- By department/specialty (GL, Physics, Mathematics, etc.).
+- By level/year (L1, L2, M1, M2, etc.).
+- By class/group (GL4-A, GL4-B, Physics M1-C, etc.).
+- By role (students only, teachers only, coordinators only, mixed).
+- Custom combinations of above.
+
+Features:
+- Title and description.
+- Attachments and links.
+- Urgent/high-priority flag.
+- Scheduling option (post now or schedule for later).
+- Read/seen tracking (optional).
+- Approval status for teacher-submitted global drafts (Pending, Approved, Rejected).
+
+Content types:
+- Schedule changes and cancellations.
+- Important dates and deadlines.
+- Emergency/urgent notices.
+- Official policies and decisions.
+- Event announcements (limited to institutional events).
+
+
+4. MESSAGING MODEL (FINAL)
+================================================================================
+
+Core rule: Messaging is flexible but controlled by strict defaults.
+Exception: Admin can override defaults to enable restricted scenarios.
+
+ALLOWED MESSAGING SCENARIOS:
+
+1. General Class Group Chat (Default System Group)
+   Members: All students of the class + class coordinator.
+   Teacher membership: Not included by default; teachers can be added manually by admin when needed.
+   Content: Fast informal class communication.
+   Visibility: All members see full history.
+
+2. Course Chat (Optional Per Course)
+   Members: All students enrolled in that course + the course teacher.
+   Coordinator membership: Not included by default; coordinator can be added manually by admin when needed.
+   Content: Course-specific operational communication.
+   Visibility: All course-chat members see full history.
+
+3. Student ↔ Teacher (Private 1-to-1)
+   Constraint: Only between a student and a teacher of that student's course.
+   Content: Academic questions, feedback requests, private concerns.
+
+4. Student ↔ Coordinator (Private 1-to-1)
+   Constraint: Only in the student's class context.
+   Content: Administrative requests, official matters.
+
+5. Teacher ↔ Teacher (Private 1-to-1)
+   No constraint: Any teacher can message any other teacher.
+   Content: Coordination, sharing resources, collaboration.
+
+6. Teacher ↔ Coordinator (Private 1-to-1)
+   Content: Class coordination, policy matters.
+
+7. Staff Groups (System/Admin-Defined Only)
+   Examples: Coordinators group, Teachers-by-department, Exam committee.
+   Creation: Admin/system only (users cannot create custom groups).
+   Members: Added by admin; role-based rules apply.
+
+NOT ALLOWED BY DEFAULT:
+
+- Student ↔ Student private messaging (can be overridden by admin if needed).
+- User-created custom groups (can be overridden by admin if needed).
+- Project group chats (explicitly excluded, no override).
+- Unrestricted group creation (admin controls all groups).
+
+GOVERNANCE:
+
+- All messaging respects role-based access rules.
+- All messaging respects course/class membership rules.
+- Retention policy applied to all messages (see section 6).
+- Audit logs track message access for security/moderation.
+
+MODERATION RULES:
+- General class group: coordinator can pin/unpin and report abuse; admin can delete messages, mute users, and lock/unlock group.
+- Course chat: teacher can pin/unpin and report abuse; admin can delete messages, mute users, and lock/unlock group.
+- Private chats: participants can delete their own messages; admin actions follow audit/escalation policy.
+
+BASIC ANTI-ABUSE & SECURITY LIMITS:
+- Rate limits on message posting and attachment uploads.
+- File upload restrictions by type and size.
+- User reporting for abusive content.
+- Automatic abuse flags sent to coordinator/admin review queue.
+
+
+5. COURSE PAGE STRUCTURE
+================================================================================
+
+Each course/class has a dedicated page with the following tabs/sections:
+
+Tab 1: OVERVIEW
+- Course title and code.
+- Teacher information.
+- Short course description.
+- Last updates (recent announcements/materials posted).
+
+Tab 2: ANNOUNCEMENTS
+- All course announcements published by the teacher.
+- Chronological display with pinned important posts at top.
+- Attachments fully displayable/downloadable.
+- Visible only to course members (automatic).
+
+Tab 3: MATERIALS
+- Organized by week/chapter/module.
+- File types: PDFs, slides, documents, links, videos.
+- Optional filters: by type, by date, search.
+- Students can download or view files.
+
+Tab 4: MESSAGING
+- Entry point to course-related communication.
+- Shows course chat when enabled (direct access/quick link).
+- Optional shortcut to message the course teacher privately.
+- Optional shortcut to the general class group chat.
+
+Tab 5: MEMBERS
+- List of enrolled students.
+- Teacher information.
+- No manual membership editing by students (managed by system role allocation).
+
+WHAT NOT ON COURSE PAGE:
+- Exam planning or invigilation schedules.
+- Jury or assessment workflows.
+- Grade publication (optional, handled separately by coordinator if needed).
+- Room/material reservations.
+- Assignment submissions (not in original Project 4 scope).
+- Forum discussions (explicitly removed).
+
+
+6. RETENTION & ARCHIVE POLICY
+================================================================================
+
+STORAGE DURATION:
+- Regular messages (private + group chat): Keep for 2 academic years; then move to archive.
+- Regular announcements (course + global): Keep for 3 academic years; then move to archive.
+- Pinned/official strategic announcements: Keep indefinitely until manually archived by coordinator/admin.
+
+PURGE BEHAVIOR:
+- End of retention period triggers hard delete for regular messages and regular announcements.
+- Before purge, metadata logs (non-content) are retained for compliance/audit duration defined by institution policy.
+- A 30-day warning can be shown to authorized owners before final purge (optional feature).
+
+WHO CAN ACCESS ARCHIVES:
+- Students: Can view archives of courses they were enrolled in (within retention period).
+  After final purge period: no access to archived course materials.
+- Teachers: Can view archives of courses they taught (within retention period).
+- Coordinators: Can view archives of classes they coordinate (within and beyond retention period).
+- Administrators: Full archive access for metadata and governance; escalation audits only (see section 7).
+
+Archive retrieval:
+- Upon request by authorized user.
+- Protected access (requires permission check).
+
+
+7. OVERRIDE POLICY BOUNDARIES
+================================================================================
+
+Principle: Admin has authority to selectively enable restricted messaging scenarios.
+
+DEFAULT RESTRICTIONS:
+- Student ↔ Student private messaging: DISABLED (students cannot message each other).
+- User-created custom groups: DISABLED (only system/admin groups exist).
+- Project group chats: PERMANENTLY EXCLUDED (cannot be enabled).
+
+ADMIN CAN OVERRIDE TO ENABLE:
+- Student ↔ Student messaging: If pedagogically justified (example: group project collaboration).
+  Condition: Limited scope, time-bound, monitored.
+- Custom group creation: If department/event requires ad-hoc team spaces.
+  Condition: Admin approval per group; defined purpose and lifetime.
+
+ADMIN CANNOT OVERRIDE:
+- Project group chats (explicitly out of scope).
+- PFE/exam/jury workflows (separate projects).
+- Messaging without role-based governance (security locked).
+
+AUDIT TRAIL:
+- Every override decision logged.
+- Reason documented.
+- Expiration date set (if time-limited).
+
+
+8. STAFF GROUPS (SYSTEM-DEFINED)
+================================================================================
+
+Mandatory staff groups (created by default):
+- Coordinators Group: All coordinators; for institutional-level coordination.
+- Teachers Group (optional): All teachers faculty-wide; for pedagogy/policy sharing.
+
+Optional departmental groups (configurable by admin):
+- Teachers by Department: Each department (GL, Physics, Math, etc.).
+- Coordinators by Level: Each year (L1, L2, M1, M2).
+- Admin/Emergency Response Team: For urgent facility matters.
+
+Membership:
+- Automatically assigned by role and department.
+- Manual adjustments by admin only.
+
+Purpose:
+- Fast staff coordination.
+- Policy/process announcements.
+- Collective decisions.
+
+No user-created groups.
+
+
+9. COURSE MEMBERSHIP & AUTO-ADD POLICY
+================================================================================
+
+Automatic enrollment to course/class communication spaces:
+
+WHO IS AUTO-ADDED:
+- Course spaces: all students in that academic class/group + the course teacher (or main teaching team).
+- General class group chat: all students in that class/group + class coordinator.
+- Teachers are not auto-added to the general class group chat.
+- Coordinator is not auto-added to course chat.
+
+Course addition process:
+- When student is enrolled in the system by admin: automatic access to course page/chat.
+- When teacher is assigned to teach: automatic access to course communication.
+- When course is created: teacher specified; students defined by class membership.
+
+MANUAL MANAGEMENT:
+- Admin can manually add/remove users if exceptions arise.
+- Students cannot self-enroll in courses.
+- Teachers cannot disable/hide course listings (coordinator/admin decision).
+
+REMOVAL:
+- When student's class enrollment ends: automatic access revoked after semester finale.
+- Messages/announcements archived per retention policy.
+
+
+10. CORE FEATURES (MUST HAVE)
+================================================================================
+
+1. Authentication and Role-Based Access Control
+   - Login with credentials.
+   - Role assignment (Student, Teacher, Coordinator, Admin).
+   - Permission checks on every action.
+
+2. Centralized User Directory
+   - Structured profiles: name, role, class/group, department/specialty, official contact.
+   - Searchable and filterable.
+   - Visibility rules enforced (no unauthorized viewing).
+
+3. Advanced Search & Filter
+   - Search by name, role, department, level, class/group.
+   - Filter results for quick discovery.
+   - Role-based visibility respected.
+
+4. Course Announcements
+   - Course page with announcements tab.
+   - Teacher publishes; students see automatically.
+   - Attachments and course details supported.
+
+5. Global Announcements with Audience Targeting
+   - Faculty/institution-level announcements.
+   - Coordinator publishes directly.
+   - Teacher global announcements require admin approval before publication.
+   - Admin can publish directly.
+   - Audience selector: department, level, group, role.
+   - Urgent flag option.
+
+6. Messaging System
+   - Private messaging (Student ↔ Teacher/Coordinator, Teacher ↔ Teacher, Staff ↔ Staff).
+   - General class group chat (students + coordinator by default).
+   - Optional course chat (students + teacher by default).
+   - Staff groups (admin-defined only).
+   - Message history and notifications.
+
+7. Notifications
+   - In-app alerts for new messages.
+   - In-app alerts for new announcements.
+   - Notification center / inbox.
+
+8. Basic Privacy & Security Controls
+   - Profile visibility rules.
+   - Role-based access enforcement.
+   - Protected data fields (phone, email with limits).
+   - Audit capability for admins.
+
+9. Course Page
+   - Overview, Announcements, Materials, Messaging, Members tabs.
+   - Course information and resources central hub.
+
+10. Admin Controls
+    - User management (create/edit/deactivate).
+    - Role assignment and permission governance.
+    - Staff group management.
+    - Override policy configuration.
+    - Audit logs (basic access tracking).
+
+
+11. OPTIONAL FEATURES (PHASE 2 / NICE TO HAVE)
+================================================================================
+
+- Message read receipts and "seen" status.
+- Pin/unpin messages in group chat.
+- Announcement scheduling (publish at specific future time).
+- Announcement "seen by" tracking (how many read).
+- Search within chat history and archived messages.
+- Export/download announcements and messages as PDF/CSV.
+- Basic engagement analytics (who reads what, response times).
+- Mobile push notifications.
+- Multilingual user interface.
+- Message mute options (silence group notifications).
+- Emoji reactions in chat.
+- File attachment search across announcements.
+
+
+12. EXPLICITLY EXCLUDED (NO OVERLAP WITH OTHER PROJECTS)
+================================================================================
+
+PFE Management:
+- Subject proposal/selection workflow.
+- Team formation and supervision.
+- Final project assessment and jury interaction.
+
+Exam Planning & Management:
+- Exam scheduling and invigilator assignment.
+- Incident reporting during exams.
+- Surveillance/attendance tracking for exams.
+
+Results & Jury Workflows:
+- PV (Process-Verbal) publication.
+- Jury reclamations/challenges.
+- Disputed grade management.
+
+Alumni & Networking:
+- Alumni profile creation and updates.
+- Career tracking and mentorship.
+- Alumni events and reunions.
+
+Club & Project Management:
+- Student club coordination.
+- Club event planning.
+- Student project tracking and coordination.
+
+Room & Material Reservation:
+- Classroom/lab space booking.
+- Equipment/projector reservations.
+- Room availability calendars.
+
+Forum (Discussion Threads):
+- Discussion topics by academic subject.
+- Threaded Q&A with voting.
+- This feature was explicitly removed during design.
+
+
+13. TOPICS DEFERRED TO LATER DISCUSSION
+================================================================================
+
+1. Urgent Announcement Behavior
+   - Question: Should urgent notices trigger forced/modal notifications?
+   - Question: Should they require acknowledgment from recipients?
+   - Question: Should they auto-resend if not acknowledged?
+   → To be discussed in Phase 2 or implementation phase.
+
+2. Admin Access to Private Chat Content
+   - Question: Can admins read student-teacher private messages by default?
+   - Question: Can they read staff group conversations?
+   - Question: What legal/audit triggers allow this access?
+   - Question: Is there a warrant/escalation procedure needed?
+   → Policy decision to be made with legal/compliance team.
+
+
+14. SUMMARY TABLE: WHO CAN DO WHAT
+================================================================================
+
+ACTION                          | STUDENT | TEACHER | COORDINATOR | ADMIN
+---------------------------------------------------------------------------
+View Directory                  |    ✓    |    ✓    |      ✓      |   ✓
+Search Users                    |    ✓    |    ✓    |      ✓      |   ✓
+Access Courses                  |    ✓    |    ✓    |      ✓      |   ✓
+Read Course Announcements       |    ✓    |    ✓    |      ✓      |   ✓
+Post Course Announcements       |    ✗    |    ✓    |      ✓      |   ✓
+Post Global Announcements       |    ✗    |   ✓*    |      ✓      |   ✓
+Message Teacher (1-to-1)        |    ✓    |    ✗    |      ✗      |   ✗
+Message Coordinator (1-to-1)    |    ✓    |    ✓    |      ✗      |   ✗
+Message Other Students          |    ✗    |    ✗    |      ✗      |   ✗
+Message Other Teachers          |    ✗    |    ✓    |      ✓      |   ✓
+General Class Group Chat        |    ✓    |   ✓**   |      ✓      |  ✓**
+Course Chat                     |    ✓    |    ✓    |   ✓***      | ✓***
+Create User                     |    ✗    |    ✗    |      ✓      |   ✓
+Manage Roles/Permissions        |    ✗    |    ✗    |      ✗      |   ✓
+Override Messaging Policy       |    ✗    |    ✗    |      ✗      |   ✓
+Manage Staff Groups             |    ✗    |    ✗    |      ✗      |   ✓
+View Audit Logs                 |    ✗    |    ✗    |      ✗      |   ✓
+
+Notes:
+- * Teacher can publish global announcements only after admin approval.
+- ** Teacher/admin are not default members of the general class group chat; access applies only when manually added by admin.
+- *** Coordinator/admin are not default members of course chat; access applies only when manually added by admin.
+
+
+15. IN SCOPE SUMMARY
+================================================================================
+
+The app is a CONTACT & COMMUNICATION PLATFORM for institutional users.
+
+Core value:
+- Clear, role-based, secure connection between students, teachers, and coordinators.
+- Official institutional announcements with targeted audience reach.
+- Organized messaging by class and course.
+- Protected user data and privacy.
+
+Development focus:
+1. Authentication & authorization.
+2. Directory & search.
+3. Announcements (course + global).
+4. Messaging (class chat + private restricted messaging).
+5. Course page hub.
+6. Admin governance.
+7. Security & audit.
+
+Not-in-scope focus:
+- Exam management, PFE workflows, alumni networks, clubs, reservations.
+- Advanced LMS features (assignments, grading, live classes).
+- Forum/discussion threads.
+- Social networking features.
+
+================================================================================
+END OF SPECIFICATION
+================================================================================

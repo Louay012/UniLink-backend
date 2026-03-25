@@ -1,0 +1,577 @@
+================================================================================
+FACULTY CONTACT & COMMUNICATION PLATFORM
+Next Step: Data Model and UML Diagrams
+Date: 20 March 2026
+================================================================================
+
+teacher info ( address .... )
+
+1) RELATIONAL DATA MODEL (LOGICAL)
+================================================================================
+
+A. Core Identity and Access
+
+Design principle:
+- Single account per person: one row in users for each real person.
+- A user can hold multiple active roles at the same time (e.g., TEACHER + COORDINATOR, TEACHER + STUDENT).
+- Role combinations are modeled through user_roles and role-specific profile tables, not duplicate user accounts.
+
+1. users
+- id (PK)
+- first_name
+- last_name
+- email (UNIQUE)
+- phone
+- status (active, suspended, archived)
+- created_at
+- updated_at
+
+2. roles
+- id (PK)
+- code (UNIQUE)  -- STUDENT, TEACHER, COORDINATOR, ADMIN
+- label
+
+3. user_roles
+- user_id (FK -> users.id)
+- role_id (FK -> roles.id)
+- PRIMARY KEY (user_id, role_id)
+- NOTE: supports multi-role users; same user can have multiple rows (one per role).
+
+3.1 teacher_profiles (teacher-only attributes)
+- user_id (PK, FK -> users.id)
+- employee_code (UNIQUE)
+- professional_grade  -- e.g. Assistant, Maitre-Assistant, Professor
+- employment_status (ENUM: ACTIVE, ON_LEAVE, RETIRED, SUSPENDED)
+- academic_rank (nullable)
+- hire_date (nullable)
+- office_location (nullable)
+- office_hours (nullable)
+- bio (nullable)
+- updated_at
+
+3.2 student_profiles (student-only attributes)
+- user_id (PK, FK -> users.id)
+- student_number (UNIQUE)
+- class_group_id (FK -> class_groups.id)
+- enrollment_status (ENUM: ACTIVE, ON_BREAK, GRADUATED, SUSPENDED)
+- enrollment_year (nullable)
+- program_name (nullable)
+- updated_at
+
+Coordinator modeling rule:
+- Coordinator is a role assignment (COORDINATOR) and usually linked to a class via class_groups.coordinator_user_id.
+- No separate coordinator profile table is required unless coordinator-only attributes are later introduced.
+
+4. departments
+- id (PK)
+- code (UNIQUE)  -- GL, PHYS, MATH...
+- name
+
+5. levels
+- id (PK)
+- code (UNIQUE)  -- L1, L2, M1, M2
+- name
+
+
+6. class_groups
+- id (PK)
+- code (UNIQUE)  -- GL4-A, PHYS-M1-C
+- name
+- department_id (FK -> departments.id)
+- level_id (FK -> levels.id)
+- coordinator_user_id (FK -> users.id)  -- one responsible coordinator
+
+7. class membership rule (derived from student profile)
+- A student belongs to exactly one class through student_profiles.class_group_id.
+- Therefore, a separate class_group_members table is not needed in this project context.
+
+
+B. Courses and Membership
+
+8. courses
+- id (PK)
+- code (UNIQUE)
+- title
+- description
+- class_group_id (FK -> class_groups.id)
+- is_course_chat_enabled (BOOLEAN, default false)
+- created_at
+- updated_at
+- NOTE: in this faculty context, all students of class_group are considered enrolled in all courses of that class_group.
+
+9. course_teachers
+- course_id (FK -> courses.id)
+- user_id (FK -> users.id)
+- PRIMARY KEY (course_id, user_id)
+- NOTE: main teacher or teaching team
+- teaching_role (ENUM: TP_TEACHER, TD_TEACHER, COURS_TEACHER)
+- Previous values (kept as reference): PRIMARY, CO_TEACHER, ASSISTANT, LAB_SUPERVISOR.
+- assigned_at
+- unassigned_at (nullable)
+
+10. course enrollment rule (derived, no table)
+- Enrolled students for a course are derived from student_profiles.class_group_id via courses.class_group_id.
+- Therefore, a dedicated course_students table is not needed in this project context.
+
+
+C. Announcements
+
+11. announcements
+- id (PK)
+- scope (ENUM: COURSE, GLOBAL)
+- title
+- body
+- priority (ENUM: NORMAL, URGENT)
+- status (ENUM: DRAFT, PUBLISHED, ARCHIVED)
+- Previous values (kept as reference): DRAFT, PENDING_APPROVAL, PUBLISHED, REJECTED, ARCHIVED.
+- created_by_user_id (FK -> users.id)
+- published_at (nullable)
+- created_at
+- updated_at
+12. announcement_targets
+- id (PK)
+- announcement_id (FK -> announcements.id)
+- target_type (ENUM: COURSE, ROLE, DEPARTMENT, LEVEL, CLASS_GROUP, ALL_STUDENTS)
+- Previous values (kept as reference): ROLE, DEPARTMENT, LEVEL, CLASS_GROUP, ALL_STUDENTS.
+- target_value
+- NOTE: target_value stores role code or entity id depending on target_type.
+- NOTE: for COURSE scope, use target_type=COURSE with course_id as value.
+
+13. announcement_attachments
+- id (PK)
+- announcement_id (FK -> announcements.id)
+- file_name
+- file_url
+- mime_type
+- file_size
+
+14. announcement_reads (optional)
+- announcement_id (FK -> announcements.id)
+- user_id (FK -> users.id)
+- read_at
+- PRIMARY KEY (announcement_id, user_id)
+
+
+D. Messaging and Chats
+
+16. chats
+- id (PK)
+- chat_type (ENUM: GENERAL_CLASS, COURSE, STAFF, DIRECT)
+- name (nullable for DIRECT)
+- class_group_id (FK -> class_groups.id, nullable)
+- course_id (FK -> courses.id, nullable)
+- created_by_user_id (FK -> users.id)
+- is_locked (BOOLEAN, default false)
+- created_at
+- updated_at
+
+Rules:
+- GENERAL_CLASS chat: class_group_id required, course_id null
+- COURSE chat: course_id required, class_group_id optional (derived)
+- STAFF chat: both class_group_id and course_id optional
+- DIRECT chat: exactly 2 members in chat_members
+
+17. chat_members
+- chat_id (FK -> chats.id)
+- user_id (FK -> users.id)
+- role_in_chat (ENUM: MEMBER, MODERATOR, OWNER)
+- added_by_user_id (FK -> users.id)
+- added_at
+- PRIMARY KEY (chat_id, user_id)
+
+Policy mapping:
+- GENERAL_CLASS chat auto-members: students in class_group + coordinator
+- COURSE chat auto-members: all class_group students of that course + course teachers
+- Teachers in GENERAL_CLASS chat: only if admin adds manually
+- Coordinators in COURSE chat: only if admin adds manually
+
+18. messages
+- id (PK)
+- chat_id (FK -> chats.id)
+- sender_user_id (FK -> users.id)
+- body
+- is_deleted (BOOLEAN, default false)
+- created_at
+- updated_at
+
+19. message_attachments
+- id (PK)
+- message_id (FK -> messages.id)
+- file_name
+- file_url
+- mime_type
+- file_size
+
+20. message_reports
+- id (PK)
+- message_id (FK -> messages.id)
+- reported_by_user_id (FK -> users.id)
+- reason
+- status (ENUM: OPEN, REVIEWED, RESOLVED, DISMISSED)
+- reviewed_by_user_id (FK -> users.id, nullable)
+- created_at
+- reviewed_at (nullable)
+
+
+E. Governance and Security
+
+21. policy_overrides
+- id (PK)
+- key_name  -- e.g. ENABLE_STUDENT_STUDENT_DM
+- value_bool
+- reason
+- set_by_user_id (FK -> users.id)
+- expires_at (nullable)
+- created_at
+
+22. moderation_actions
+- id (PK)
+- chat_id (FK -> chats.id, nullable)
+- message_id (FK -> messages.id, nullable)
+- action_type (ENUM: DELETE_MESSAGE, MUTE_USER, LOCK_CHAT, UNLOCK_CHAT, PIN_MESSAGE, UNPIN_MESSAGE)
+- target_user_id (FK -> users.id, nullable)
+- performed_by_user_id (FK -> users.id)
+- reason
+- created_at
+
+23. audit_logs
+- id (PK)
+- actor_user_id (FK -> users.id)
+- action
+- entity_type
+- entity_id
+- metadata_json
+- created_at
+
+
+F. Retention and Archive
+
+24. retention_jobs
+- id (PK)
+- job_type (ENUM: MESSAGE_ARCHIVE, MESSAGE_PURGE, ANNOUNCEMENT_ARCHIVE, ANNOUNCEMENT_PURGE)
+- status (ENUM: QUEUED, RUNNING, DONE, FAILED)
+- executed_at
+- details
+
+25. archived_messages (optional physical archive table)
+- id (PK)
+- original_message_id
+- chat_id
+- sender_user_id
+- body
+- archived_at
+
+26. archived_announcements (optional physical archive table)
+- id (PK)
+- original_announcement_id
+- scope
+- title
+- body
+- archived_at
+
+
+2) KEY BUSINESS RULES (FROM AGREED POLICY)
+================================================================================
+
+- Teacher can publish COURSE announcements directly.
+- Teacher can publish GLOBAL announcements directly.
+- Coordinator can publish GLOBAL announcements directly.
+- Admin can publish both COURSE and GLOBAL announcements directly.
+
+- GENERAL_CLASS chat default members: students + coordinator.
+- COURSE chat default members: all students of the course class_group + teacher(s) of that course.
+- Teachers are not auto-added to GENERAL_CLASS chat.
+- Coordinator is not auto-added to COURSE chat.
+
+- Course enrollment is derived from student_profiles.class_group_id (no course_students table).
+
+- Student-to-student direct messaging disabled by default.
+- Custom user-created groups disabled.
+- Staff groups are system/admin-defined.
+- Admin can enable selected restricted behaviors through policy_overrides.
+
+
+3) UML USE CASE (TEXT)
+================================================================================
+
+Actors:
+- Student
+- Teacher
+- Coordinator
+- Admin
+
+Main use cases:
+- Authenticate user
+- Search directory
+- View a unified profile with all active roles
+- Send private message
+- Participate in class/course chat
+- Publish course announcement
+- Publish global announcement
+- Manage staff groups
+- Apply policy override
+- Moderate message/chat
+- Access archive (authorized scope)
+
+
+4) UML CLASS DIAGRAM (PLANTUML)
+================================================================================
+
+@startuml
+class User {
+  +id: UUID
+  +firstName: string
+  +lastName: string
+  +email: string
+  +status: string
+}
+
+class Role {
+  +id: UUID
+  +code: string
+}
+
+class TeacherProfile {
+  +userId: UUID
+  +employeeCode: string
+  +professionalGrade: string
+  +employmentStatus: string
+  +academicRank: string
+}
+
+class StudentProfile {
+  +userId: UUID
+  +studentNumber: string
+  +enrollmentStatus: string
+  +enrollmentYear: int
+  +programName: string
+}
+
+class ClassGroup {
+  +id: UUID
+  +code: string
+  +name: string
+}
+
+class Course {
+  +id: UUID
+  +code: string
+  +title: string
+  +isCourseChatEnabled: boolean
+}
+
+class Announcement {
+  +id: UUID
+  +scope: string
+  +status: string
+  +priority: string
+  +title: string
+}
+
+class Chat {
+  +id: UUID
+  +chatType: string
+  +name: string
+  +isLocked: boolean
+}
+
+class Message {
+  +id: UUID
+  +body: text
+  +createdAt: datetime
+}
+
+class PolicyOverride {
+  +id: UUID
+  +keyName: string
+  +valueBool: boolean
+  +expiresAt: datetime
+}
+
+User "*" -- "*" Role : user_roles
+User "1" -- "0..1" TeacherProfile : teacher_profile
+User "1" -- "0..1" StudentProfile : student_profile
+ClassGroup "1" -- "*" Course
+ClassGroup "1" -- "*" StudentProfile : members
+ClassGroup "1" -- "1" User : coordinator
+Course "*" -- "*" User : teachers
+ClassGroup "1" -- "*" StudentProfile : students_enrolled_in_all_its_courses
+Announcement "*" -- "1" User : createdBy
+Chat "*" -- "*" User : chat_members
+Chat "1" -- "*" Message
+Message "*" -- "1" User : sender
+PolicyOverride "*" -- "1" User : setBy
+
+@enduml
+
+
+5) UML SEQUENCE DIAGRAMS (PLANTUML)
+================================================================================
+
+A) Teacher publishes global announcement directly
+
+@startuml
+actor Teacher
+participant App
+participant AnnouncementService
+participant NotificationService
+
+Teacher -> App: Create GLOBAL announcement
+App -> AnnouncementService: publish(status=PUBLISHED)
+AnnouncementService -> NotificationService: notify target audience
+NotificationService --> App: notification result
+App --> Teacher: Published
+@enduml
+
+B) Coordinator publishes global announcement directly
+
+@startuml
+actor Coordinator
+participant App
+participant AnnouncementService
+participant NotificationService
+
+Coordinator -> App: Create GLOBAL announcement
+App -> AnnouncementService: publish(status=PUBLISHED)
+AnnouncementService -> NotificationService: notify audience
+NotificationService --> App
+App --> Coordinator: Published
+@enduml
+
+C) Course chat auto-membership
+
+@startuml
+actor Admin
+participant App
+participant CourseService
+participant ChatService
+
+Admin -> App: Create/assign course
+App -> CourseService: create course + assign teacher + class_group
+CourseService -> ChatService: ensure course chat exists (if enabled)
+ChatService -> ChatService: add class_group students + course teacher(s)
+ChatService --> App: course chat ready
+App --> Admin: Done
+@enduml
+
+
+6) ER DIAGRAM (MERMAID)
+================================================================================
+
+```mermaid
+erDiagram
+  USERS ||--o{ USER_ROLES : has
+  ROLES ||--o{ USER_ROLES : assigned_to
+  USERS ||--o| TEACHER_PROFILES : has
+  USERS ||--o| STUDENT_PROFILES : has
+
+  DEPARTMENTS ||--o{ CLASS_GROUPS : contains
+  LEVELS ||--o{ CLASS_GROUPS : has
+  USERS ||--o{ CLASS_GROUPS : coordinates
+  CLASS_GROUPS ||--o{ STUDENT_PROFILES : includes
+
+  CLASS_GROUPS ||--o{ COURSES : owns
+  COURSES ||--o{ COURSE_TEACHERS : assigned
+  USERS ||--o{ COURSE_TEACHERS : teaches
+  STUDENT_PROFILES }o--|| COURSES : derived_enrollment_via_class_group
+
+  USERS ||--o{ ANNOUNCEMENTS : creates
+  ANNOUNCEMENTS ||--o{ ANNOUNCEMENT_TARGETS : targets
+  ANNOUNCEMENTS ||--o{ ANNOUNCEMENT_ATTACHMENTS : has
+
+  CHATS ||--o{ CHAT_MEMBERS : includes
+  USERS ||--o{ CHAT_MEMBERS : member_of
+  CHATS ||--o{ MESSAGES : contains
+  USERS ||--o{ MESSAGES : sends
+  MESSAGES ||--o{ MESSAGE_ATTACHMENTS : has
+  MESSAGES ||--o{ MESSAGE_REPORTS : reported
+
+  USERS ||--o{ POLICY_OVERRIDES : sets
+  USERS ||--o{ AUDIT_LOGS : performs
+```
+
+
+7) MVP DATABASE IMPLEMENTATION ORDER
+================================================================================
+
+Phase A (must first)
+1. users, roles, user_roles, teacher_profiles, student_profiles
+2. departments, levels, class_groups
+3. courses, course_teachers
+
+Phase B
+4. announcements, targets, attachments
+5. chats, chat_members, messages, message_attachments
+
+Phase C
+6. policy_overrides, moderation_actions, audit_logs
+7. archive/retention tables and jobs
+
+
+8) OPEN POINTS (DEFERRED, NOT BLOCKING DATA MODEL)
+================================================================================
+
+- Urgent notices acknowledgment policy (forced read vs standard notification)
+- Admin private chat content access policy (default access vs audit-triggered access)
+
+
+9) PROFILE UI PROJECTION RULES (MULTI-ROLE USERS)
+================================================================================
+
+- Each person has one profile page sourced from users.
+- Show all active role badges from user_roles (e.g., TEACHER, COORDINATOR, STUDENT).
+- Render role-specific sections conditionally:
+  - Teacher section if teacher_profiles exists.
+  - Student section if student_profiles exists.
+  - Coordinator section if user has COORDINATOR role and/or coordinates one or more class_groups.
+- Permissions are role-and-context based; do not create multiple accounts for the same person.
+
+
+10) TECHNOLOGY STACK (FREE-ONLY)
+================================================================================
+
+Agreed principle:
+- Use only free/open-source tools and free service tiers for MVP and academic deployment.
+
+Application stack:
+- Frontend: Next.js + TypeScript + Tailwind CSS
+- Backend API: NestJS (Node.js + TypeScript)
+- Database: PostgreSQL
+- ORM: Prisma
+- Realtime messaging: Socket.IO
+- Authentication: JWT (access + refresh tokens)
+- Cache/queue: Redis + BullMQ (optional in MVP phase)
+
+File storage options (free):
+- Option A: Cloudflare R2 free tier
+- Option B: MinIO self-hosted (fully free)
+
+Deployment options (free tiers):
+- Frontend: Vercel free tier (or Netlify free tier)
+- Backend: Render free tier
+- Database: Supabase (PostgreSQL free tier) or Neon free tier
+
+Alternative fully free hosting path:
+- Docker Compose on a free self-hosted VM (if available), with PostgreSQL + backend + frontend.
+
+Operational note:
+- Free tiers are sufficient for MVP/demo usage but may have sleep/quotas.
+- This does not block academic project delivery.
+
+
+11) NEXT STEP (AFTER DATA MODEL)
+================================================================================
+
+Recommended immediate next step:
+- Generate MVP SQL schema and migration plan from this final model.
+
+Concrete deliverables for next step:
+1. SQL DDL script (tables, PK/FK, enums, indexes)
+2. Seed script (roles, sample departments, levels)
+3. Constraint checklist (chat uniqueness, announcement scope checks)
+4. API contract draft (Auth, Directory, Announcements, Messaging)
+
+
+================================================================================
+END
+================================================================================
