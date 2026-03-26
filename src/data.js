@@ -1,7 +1,8 @@
 const users = [
   { id: "u-student-1", name: "Meriem Ben Ali", role: "STUDENT", classGroupCode: "GL4-A" },
   { id: "u-teacher-1", name: "Dr. Sami Trabelsi", role: "TEACHER", classGroupCode: "GL4-A" },
-  { id: "u-teacher-2", name: "Dr. Aya Jlassi", role: "TEACHER", classGroupCode: "GL4-A" }
+  { id: "u-teacher-2", name: "Dr. Aya Jlassi", role: "TEACHER", classGroupCode: "GL4-A" },
+  { id: "u-coordinator-1", name: "Pr. Leila Mansour", role: "COORDINATOR", classGroupCode: "GL4-A" }
 ];
 
 const courses = [
@@ -76,9 +77,67 @@ const announcements = [
   }
 ];
 
+const chats = [
+  {
+    id: "chat-class-gl4a",
+    chatType: "GENERAL_CLASS",
+    name: "GL4-A General",
+    classGroupCode: "GL4-A",
+    courseId: null,
+    createdBy: "u-coordinator-1"
+  },
+  {
+    id: "chat-course-c-1",
+    chatType: "COURSE",
+    name: "Advanced Algorithms Chat",
+    classGroupCode: "GL4-A",
+    courseId: "c-1",
+    createdBy: "u-teacher-1"
+  },
+  {
+    id: "chat-course-c-2",
+    chatType: "COURSE",
+    name: "Web Engineering Chat",
+    classGroupCode: "GL4-A",
+    courseId: "c-2",
+    createdBy: "u-teacher-2"
+  }
+];
+
+const chatMembers = [
+  { chatId: "chat-class-gl4a", userId: "u-student-1" },
+  { chatId: "chat-class-gl4a", userId: "u-coordinator-1" },
+
+  { chatId: "chat-course-c-1", userId: "u-student-1" },
+  { chatId: "chat-course-c-1", userId: "u-teacher-1" },
+
+  { chatId: "chat-course-c-2", userId: "u-student-1" },
+  { chatId: "chat-course-c-2", userId: "u-teacher-2" }
+];
+
+const messages = [
+  {
+    id: "m-1",
+    chatId: "chat-course-c-1",
+    senderUserId: "u-teacher-1",
+    body: "Welcome to the course chat. Use this channel for quick questions.",
+    createdAt: "2026-03-24T09:00:00Z"
+  },
+  {
+    id: "m-2",
+    chatId: "chat-course-c-1",
+    senderUserId: "u-student-1",
+    body: "Thank you, professor. Will we have office hours this week?",
+    createdAt: "2026-03-24T09:18:00Z"
+  }
+];
+
 module.exports = {
   users,
   courses,
   attachments,
-  announcements
+  announcements,
+  chats,
+  chatMembers,
+  messages
 };
