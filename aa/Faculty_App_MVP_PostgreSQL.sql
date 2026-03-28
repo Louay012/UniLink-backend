@@ -345,3 +345,5 @@ COMMIT;
 -- 4) Student-to-student DM disabled by default:
 --    enforce in authorization layer.
 -- =============================================================================
+ALTER TABLE users 
+ADD COLUMN IF NOT EXISTS password_hash VARCHAR(255);
