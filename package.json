@@ -6,6 +6,8 @@
   "scripts": {
     "start": "node index.js",
     "dev": "node --watch index.js",
+    "db:init": "node scripts/init-db.js",
+    "db:create-user": "node scripts/create-user.js",
     "test": "echo \"No tests configured\""
   },
   "keywords": [],
