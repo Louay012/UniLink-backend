@@ -1,4 +1,24 @@
-const { data } = require("../config/db");
+const data = require("../data");
+
+function resolveActor(user) {
+  if (!user) {
+    return null;
+  }
+
+  const byId = data.users.find((candidate) => candidate.id === user.id);
+  if (byId) {
+    return byId;
+  }
+
+  if (user.role === "TEACHER") {
+    return data.users.find((candidate) => candidate.role === "TEACHER") || null;
+  }
+  if (user.role === "COORDINATOR" || user.role === "ADMIN") {
+    return data.users.find((candidate) => candidate.role === "COORDINATOR") || null;
+  }
+
+  return data.users.find((candidate) => candidate.role === "STUDENT") || null;
+}
 
 function getUserById(userId) {
   return data.users.find((user) => user.id === userId) || null;
@@ -89,9 +109,14 @@ function formatChatForUser(chat, userId) {
 }
 
 function listAllowedContacts(user) {
+  const actor = resolveActor(user);
+  if (!actor) {
+    return [];
+  }
+
   return data.users
-    .filter((candidate) => candidate.id !== user.id)
-    .filter((candidate) => canDirectMessage(user, candidate))
+    .filter((candidate) => candidate.id !== actor.id)
+    .filter((candidate) => canDirectMessage(actor, candidate))
     .map((candidate) => ({
       id: candidate.id,
       name: candidate.name,
@@ -100,9 +125,14 @@ function listAllowedContacts(user) {
     }));
 }
 
-function listUserChats(userId, courseId) {
+function listUserChats(user, courseId) {
+  const actor = resolveActor(user);
+  if (!actor) {
+    return [];
+  }
+
   const visibleChatIds = data.chatMembers
-    .filter((member) => member.userId === userId)
+    .filter((member) => member.userId === actor.id)
     .map((member) => member.chatId);
 
   return data.chats
@@ -113,7 +143,7 @@ function listUserChats(userId, courseId) {
       }
       return chat.courseId === courseId;
     })
-    .map((chat) => formatChatForUser(chat, userId))
+    .map((chat) => formatChatForUser(chat, actor.id))
     .sort((left, right) => {
       const leftTime = left.lastMessage ? new Date(left.lastMessage.createdAt).getTime() : 0;
       const rightTime = right.lastMessage ? new Date(right.lastMessage.createdAt).getTime() : 0;
@@ -122,12 +152,17 @@ function listUserChats(userId, courseId) {
 }
 
 function createOrGetDirectChat(user, targetUserId, initialMessage) {
+  const actor = resolveActor(user);
+  if (!actor) {
+    return { status: 403, body: { message: "Unable to resolve user context." } };
+  }
+
   const target = getUserById(targetUserId);
   if (!target) {
     return { status: 404, body: { message: "Target user not found." } };
   }
 
-  if (!canDirectMessage(user, target)) {
+  if (!canDirectMessage(actor, target)) {
     return { status: 403, body: { message: "Direct chat not allowed by messaging policy." } };
   }
 
@@ -139,7 +174,7 @@ function createOrGetDirectChat(user, targetUserId, initialMessage) {
     const members = data.chatMembers
       .filter((member) => member.chatId === candidate.id)
       .map((member) => member.userId);
-    return members.length === 2 && members.includes(user.id) && members.includes(target.id);
+    return members.length === 2 && members.includes(actor.id) && members.includes(target.id);
   });
 
   const wasCreated = !chat;
@@ -150,11 +185,11 @@ function createOrGetDirectChat(user, targetUserId, initialMessage) {
       name: null,
       classGroupCode: null,
       courseId: null,
-      createdBy: user.id
+      createdBy: actor.id
     };
 
     data.chats.push(chat);
-    data.chatMembers.push({ chatId: chat.id, userId: user.id });
+    data.chatMembers.push({ chatId: chat.id, userId: actor.id });
     data.chatMembers.push({ chatId: chat.id, userId: target.id });
   }
 
@@ -162,7 +197,7 @@ function createOrGetDirectChat(user, targetUserId, initialMessage) {
     data.messages.push({
       id: `m-${Date.now()}`,
       chatId: chat.id,
-      senderUserId: user.id,
+      senderUserId: actor.id,
       body: initialMessage,
       createdAt: new Date().toISOString()
     });
@@ -171,7 +206,7 @@ function createOrGetDirectChat(user, targetUserId, initialMessage) {
   return {
     status: wasCreated ? 201 : 200,
     body: {
-      chat: formatChatForUser(chat, user.id)
+      chat: formatChatForUser(chat, actor.id)
     }
   };
 }
@@ -184,6 +219,7 @@ module.exports = {
   getUserById,
   canAccessChat,
   formatChatForUser,
+  resolveActor,
   listAllowedContacts,
   listUserChats,
   createOrGetDirectChat,

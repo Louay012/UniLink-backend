@@ -1,4 +1,24 @@
-const { data } = require("../config/db");
+const data = require("../data");
+
+function resolveActor(user) {
+  if (!user) {
+    return null;
+  }
+
+  const byId = data.users.find((candidate) => candidate.id === user.id);
+  if (byId) {
+    return byId;
+  }
+
+  if (user.role === "TEACHER") {
+    return data.users.find((candidate) => candidate.role === "TEACHER") || null;
+  }
+  if (user.role === "COORDINATOR" || user.role === "ADMIN") {
+    return data.users.find((candidate) => candidate.role === "COORDINATOR") || null;
+  }
+
+  return data.users.find((candidate) => candidate.role === "STUDENT") || null;
+}
 
 function formatCourse(course) {
   const teacher = data.users.find((u) => u.id === course.teacherId);
@@ -11,11 +31,16 @@ function formatCourse(course) {
 }
 
 function listVisibleCourses(user) {
+  const actor = resolveActor(user);
+  if (!actor) {
+    return [];
+  }
+
   const visibleCourses = data.courses.filter((course) => {
-    if (user.role === "TEACHER") {
-      return course.teacherId === user.id;
+    if (actor.role === "TEACHER") {
+      return course.teacherId === actor.id;
     }
-    return course.classGroupCode === user.classGroupCode;
+    return course.classGroupCode === actor.classGroupCode;
   });
 
   return visibleCourses.map(formatCourse);
@@ -32,7 +57,8 @@ function listCourseAnnouncements(courseId) {
 }
 
 function createCourseAnnouncement(user, courseId, payload) {
-  if (user.role !== "TEACHER") {
+  const actor = resolveActor(user);
+  if (!actor || actor.role !== "TEACHER") {
     return { status: 403, body: { message: "Only teachers can publish course announcements." } };
   }
 
@@ -41,7 +67,7 @@ function createCourseAnnouncement(user, courseId, payload) {
     return { status: 404, body: { message: "Course not found" } };
   }
 
-  if (course.teacherId !== user.id) {
+  if (course.teacherId !== actor.id) {
     return { status: 403, body: { message: "You can only publish in your own course." } };
   }
 
@@ -57,7 +83,7 @@ function createCourseAnnouncement(user, courseId, payload) {
     title,
     body,
     createdAt: new Date().toISOString(),
-    createdBy: user.id
+    createdBy: actor.id
   };
 
   data.announcements.push(newAnnouncement);

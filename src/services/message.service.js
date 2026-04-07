@@ -1,13 +1,18 @@
-const { data } = require("../config/db");
-const { canAccessChat, formatChatForUser, getChatById, getUserById } = require("./group.service");
+const data = require("../data");
+const { canAccessChat, formatChatForUser, getChatById, getUserById, resolveActor } = require("./group.service");
 
 function listChatMessages(user, chatId) {
+  const actor = resolveActor(user);
+  if (!actor) {
+    return { status: 403, body: { message: "Unable to resolve user context." } };
+  }
+
   const chat = getChatById(chatId);
   if (!chat) {
     return { status: 404, body: { message: "Chat not found." } };
   }
 
-  if (!canAccessChat(user.id, chat.id)) {
+  if (!canAccessChat(actor.id, chat.id)) {
     return { status: 403, body: { message: "You are not a member of this chat." } };
   }
 
@@ -31,19 +36,25 @@ function listChatMessages(user, chatId) {
   return {
     status: 200,
     body: {
-      chat: formatChatForUser(chat, user.id),
+      actorUserId: actor.id,
+      chat: formatChatForUser(chat, actor.id),
       items
     }
   };
 }
 
 function createChatMessage(user, chatId, body) {
+  const actor = resolveActor(user);
+  if (!actor) {
+    return { status: 403, body: { message: "Unable to resolve user context." } };
+  }
+
   const chat = getChatById(chatId);
   if (!chat) {
     return { status: 404, body: { message: "Chat not found." } };
   }
 
-  if (!canAccessChat(user.id, chat.id)) {
+  if (!canAccessChat(actor.id, chat.id)) {
     return { status: 403, body: { message: "You are not a member of this chat." } };
   }
 
@@ -55,7 +66,7 @@ function createChatMessage(user, chatId, body) {
   const newMessage = {
     id: `m-${Date.now()}`,
     chatId: chat.id,
-    senderUserId: user.id,
+    senderUserId: actor.id,
     body: cleanBody,
     createdAt: new Date().toISOString()
   };
