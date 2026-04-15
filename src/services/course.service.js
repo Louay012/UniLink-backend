@@ -50,6 +50,10 @@ function getCourseById(courseId) {
   return data.courses.find((course) => course.id === courseId) || null;
 }
 
+function listAllCourses() {
+  return data.courses.map(formatCourse);
+}
+
 function listCourseAnnouncements(courseId) {
   return data.announcements
     .filter((item) => item.courseId === courseId)
@@ -99,6 +103,7 @@ function listCourseAttachments(courseId) {
 module.exports = {
   formatCourse,
   listVisibleCourses,
+  listAllCourses,
   getCourseById,
   listCourseAnnouncements,
   createCourseAnnouncement,
