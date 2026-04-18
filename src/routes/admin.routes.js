@@ -8,6 +8,8 @@ const router = express.Router();
 router.use(requireAdmin);
 
 router.get("/admin/users",           adminController.getAllUsers);
+router.get("/admin/courses",         adminController.getAllCourses);
+router.post("/admin/users/:id/courses", adminController.assignCourse);
 router.get("/admin/users/:id",       adminController.getUserById);
 router.post("/admin/users",          adminController.createUser);
 router.patch("/admin/users/:id/role",adminController.updateUserRole);

@@ -58,79 +58,17 @@ const attachments = [
   }
 ];
 
-const announcements = [
-  {
-    id: "n-1",
-    courseId: "c-1",
-    title: "Quiz next Monday",
-    body: "Quiz covers Chapters 1 and 2. Duration: 30 minutes.",
-    createdAt: "2026-03-23T08:10:00Z",
-    createdBy: "u-teacher-1"
-  },
-  {
-    id: "n-2",
-    courseId: "c-2",
-    title: "Project brief uploaded",
-    body: "Project brief and grading rubric are now available in attachments.",
-    createdAt: "2026-03-24T10:45:00Z",
-    createdBy: "u-teacher-2"
-  }
-];
+// Announcements seeded data removed — keep empty array for runtime safety
+const announcements = [];
 
-const chats = [
-  {
-    id: "chat-class-gl4a",
-    chatType: "GENERAL_CLASS",
-    name: "GL4-A General",
-    classGroupCode: "GL4-A",
-    courseId: null,
-    createdBy: "u-coordinator-1"
-  },
-  {
-    id: "chat-course-c-1",
-    chatType: "COURSE",
-    name: "Advanced Algorithms Chat",
-    classGroupCode: "GL4-A",
-    courseId: "c-1",
-    createdBy: "u-teacher-1"
-  },
-  {
-    id: "chat-course-c-2",
-    chatType: "COURSE",
-    name: "Web Engineering Chat",
-    classGroupCode: "GL4-A",
-    courseId: "c-2",
-    createdBy: "u-teacher-2"
-  }
-];
+// Conversations (chats) seeded data removed — keep empty array for runtime safety
+const chats = [];
 
-const chatMembers = [
-  { chatId: "chat-class-gl4a", userId: "u-student-1" },
-  { chatId: "chat-class-gl4a", userId: "u-coordinator-1" },
+// Chat membership seeded data removed — keep empty array for runtime safety
+const chatMembers = [];
 
-  { chatId: "chat-course-c-1", userId: "u-student-1" },
-  { chatId: "chat-course-c-1", userId: "u-teacher-1" },
-
-  { chatId: "chat-course-c-2", userId: "u-student-1" },
-  { chatId: "chat-course-c-2", userId: "u-teacher-2" }
-];
-
-const messages = [
-  {
-    id: "m-1",
-    chatId: "chat-course-c-1",
-    senderUserId: "u-teacher-1",
-    body: "Welcome to the course chat. Use this channel for quick questions.",
-    createdAt: "2026-03-24T09:00:00Z"
-  },
-  {
-    id: "m-2",
-    chatId: "chat-course-c-1",
-    senderUserId: "u-student-1",
-    body: "Thank you, professor. Will we have office hours this week?",
-    createdAt: "2026-03-24T09:18:00Z"
-  }
-];
+// Messages seeded data removed — keep empty array for runtime safety
+const messages = [];
 
 module.exports = {
   users,

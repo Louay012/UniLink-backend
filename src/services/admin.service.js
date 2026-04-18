@@ -92,3 +92,44 @@ async function deleteUser(id) {
 }
 
 module.exports = { getAllUsers, getUserById, createUser, updateUserRole, deleteUser };
+
+// Assign a course to a user (teacher -> course_teachers, student -> student_profiles.class_group_id)
+async function assignCourseToUser(userId, courseId) {
+  // verify course exists
+  const courseRes = await pool.query(`SELECT id, class_group_id FROM courses WHERE id::text = $1 LIMIT 1`, [String(courseId)]);
+  if (!courseRes.rows || courseRes.rows.length === 0) throw new Error('Course not found');
+  const course = courseRes.rows[0];
+
+  // ensure user exists and get role
+  const user = await getUserById(userId);
+  const role = user.role;
+
+  if (role === 'TEACHER') {
+    // assign teacher to course if not already
+    const exists = await pool.query(`SELECT 1 FROM course_teachers WHERE course_id::text = $1 AND user_id::text = $2 LIMIT 1`, [String(courseId), String(userId)]);
+    if (exists.rows && exists.rows.length) {
+      return { message: 'Teacher already assigned to course' };
+    }
+    await pool.query(`INSERT INTO course_teachers (course_id, user_id) VALUES ($1::uuid, $2::uuid)`, [String(courseId), String(userId)]);
+    return { message: 'Teacher assigned to course' };
+  }
+
+  if (role === 'STUDENT') {
+    // assign student's class_group_id to the course's class_group
+    const classGroupId = course.class_group_id;
+    if (!classGroupId) throw new Error('Course has no class group');
+
+    const sp = await pool.query(`SELECT user_id FROM student_profiles WHERE user_id::text = $1 LIMIT 1`, [String(userId)]);
+    if (sp.rows && sp.rows.length) {
+      await pool.query(`UPDATE student_profiles SET class_group_id = $1 WHERE user_id::text = $2`, [String(classGroupId), String(userId)]);
+      return { message: 'Student profile updated with new class group' };
+    } else {
+      await pool.query(`INSERT INTO student_profiles (user_id, class_group_id) VALUES ($1::uuid, $2::uuid)`, [String(userId), String(classGroupId)]);
+      return { message: 'Student profile created and assigned to class group' };
+    }
+  }
+
+  throw new Error('User role not supported for course assignment');
+}
+
+module.exports = { getAllUsers, getUserById, createUser, updateUserRole, deleteUser, assignCourseToUser };

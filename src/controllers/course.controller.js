@@ -9,63 +9,70 @@ function ensureAuthenticated(req, res) {
   return false;
 }
 
-function getCourses(req, res) {
-  if (!ensureAuthenticated(req, res)) {
-    return;
-  }
+async function getCourses(req, res) {
+  if (!ensureAuthenticated(req, res)) return;
 
-  res.json({
-    user: req.user,
-    items: courseService.listVisibleCourses(req.user)
-  });
+  try {
+    const items = await courseService.listVisibleCourses(req.user);
+    return res.json({ user: req.user, items });
+  } catch (err) {
+    console.error('[controller] getCourses failed', err.message || err);
+    return res.status(500).json({ message: 'Failed to load courses.' });
+  }
 }
 
-function getCourse(req, res) {
-  if (!ensureAuthenticated(req, res)) {
-    return;
-  }
+async function getCourse(req, res) {
+  if (!ensureAuthenticated(req, res)) return;
 
-  const course = courseService.getCourseById(req.params.courseId);
-  if (!course) {
-    return res.status(404).json({ message: "Course not found" });
+  try {
+    const course = await courseService.getCourseById(req.params.courseId);
+    if (!course) return res.status(404).json({ message: 'Course not found' });
+    const formatted = await courseService.formatCourse(course);
+    return res.json(formatted);
+  } catch (err) {
+    console.error('[controller] getCourse failed', err.message || err);
+    return res.status(500).json({ message: 'Failed to load course.' });
   }
-
-  return res.json(courseService.formatCourse(course));
 }
 
-function getAnnouncements(req, res) {
-  if (!ensureAuthenticated(req, res)) {
-    return;
-  }
+async function getAnnouncements(req, res) {
+  if (!ensureAuthenticated(req, res)) return;
 
-  const course = courseService.getCourseById(req.params.courseId);
-  if (!course) {
-    return res.status(404).json({ message: "Course not found" });
+  try {
+    const course = await courseService.getCourseById(req.params.courseId);
+    if (!course) return res.status(404).json({ message: 'Course not found' });
+    const items = await courseService.listCourseAnnouncements(course.id);
+    return res.json({ items });
+  } catch (err) {
+    console.error('[controller] getAnnouncements failed', err.message || err);
+    return res.status(500).json({ message: 'Failed to load announcements.' });
   }
-
-  return res.json({ items: courseService.listCourseAnnouncements(course.id) });
 }
 
-function postAnnouncement(req, res) {
-  if (!ensureAuthenticated(req, res)) {
-    return;
-  }
+async function postAnnouncement(req, res) {
+  if (!ensureAuthenticated(req, res)) return;
 
-  const result = courseService.createCourseAnnouncement(req.user, req.params.courseId, req.body);
-  return res.status(result.status).json(result.body);
+  try {
+    const result = await courseService.createCourseAnnouncement(req.user, req.params.courseId, req.body);
+    return res.status(result.status).json(result.body);
+  } catch (err) {
+    console.error('[controller] postAnnouncement failed', err);
+    return res.status(500).json({ message: 'Failed to create announcement.' });
+  }
 }
 
-function getAttachments(req, res) {
-  if (!ensureAuthenticated(req, res)) {
-    return;
-  }
+async function getAttachments(req, res) {
+  if (!ensureAuthenticated(req, res)) return;
 
-  const course = courseService.getCourseById(req.params.courseId);
-  if (!course) {
-    return res.status(404).json({ message: "Course not found" });
+  try {
+    const course = await courseService.getCourseById(req.params.courseId);
+    if (!course) return res.status(404).json({ message: 'Course not found' });
+    const items = await courseService.listCourseAttachments(course.id);
+    return res.json({ items });
+  } catch (err) {
+    console.error('[controller] getAttachments failed', err.message || err);
+    return res.status(500).json({ message: 'Failed to load attachments.' });
   }
-
-  return res.json({ items: courseService.listCourseAttachments(course.id) });
 }
 
 module.exports = {

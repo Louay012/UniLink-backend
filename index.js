@@ -17,8 +17,25 @@ if (envPath) {
 }
 
 const app = require("./src/app");
-const PORT = process.env.PORT || 4000;
+const http = require("http");
+const { Server } = require("socket.io");
+const socketUtils = require("./src/socket");
 
-app.listen(PORT, () => {
+const server = http.createServer(app);
+
+const io = new Server(server, {
+  cors: { origin: true }
+});
+socketUtils.setIo(io);
+
+io.on("connection", (socket) => {
+  console.log("[socket] connected", socket.id);
+  socket.on("disconnect", () => {
+    console.log("[socket] disconnected", socket.id);
+  });
+});
+
+const PORT = process.env.PORT || 4000;
+server.listen(PORT, () => {
   console.log(`UniLink backend running at http://localhost:${PORT}`);
 });
