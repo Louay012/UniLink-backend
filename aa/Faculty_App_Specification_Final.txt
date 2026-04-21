@@ -50,6 +50,8 @@ B) TEACHER
 
 C) COORDINATOR
 - Official class-level authority and communication leader.
+- Auto-added to the general class chat as the supervisor.
+- Not auto-added to course-specific teacher chats unless manually added by admin.
 - Publishes global announcements with targeted audience selection (no prior approval required).
 - Publishes important class-wide administrative information (schedules, urgent notices, official outcomes).
 - Can message students and teachers.
@@ -497,10 +499,22 @@ Development focus:
 1. Authentication & authorization.
 2. Directory & search.
 3. Announcements (course + global).
-4. Messaging (class chat + private restricted messaging).
+4. Messaging (general class chat, course chat, and private restricted messaging).
 5. Course page hub.
 6. Admin governance.
 7. Security & audit.
+
+Phase 1 deliverables:
+- Login and role-based access.
+- User directory and search.
+- Course announcements.
+- Global announcements.
+- General class chat.
+- Course chat.
+- Private messages.
+- Notifications.
+- Admin user/role management.
+- Retention/archive policy.
 
 Not-in-scope focus:
 - Exam management, PFE workflows, alumni networks, clubs, reservations.
