@@ -30,6 +30,17 @@ socketUtils.setIo(io);
 
 io.on("connection", (socket) => {
   console.log("[socket] connected", socket.id);
+
+  socket.on("chat:join", ({ chatId } = {}) => {
+    if (!chatId) return;
+    socket.join(`chat:${chatId}`);
+  });
+
+  socket.on("chat:leave", ({ chatId } = {}) => {
+    if (!chatId) return;
+    socket.leave(`chat:${chatId}`);
+  });
+
   socket.on("disconnect", () => {
     console.log("[socket] disconnected", socket.id);
   });

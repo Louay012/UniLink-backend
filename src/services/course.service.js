@@ -60,6 +60,7 @@ async function formatCourse(course) {
     description: course.description,
     classGroupId: course.class_group_id || null,
     classGroupCode: course.class_group_code || null,
+    isCourseChatEnabled: Boolean(course.is_course_chat_enabled),
     teacher,
     announcementCount,
     attachmentCount,
@@ -77,7 +78,7 @@ async function listVisibleCourses(user) {
 
     if (actor.role === 'TEACHER') {
       const res = await pool.query(
-        `SELECT c.id, c.code, c.title, c.description, c.class_group_id, cg.code AS class_group_code, c.created_at, c.updated_at
+        `SELECT c.id, c.code, c.title, c.description, c.class_group_id, cg.code AS class_group_code, c.is_course_chat_enabled, c.created_at, c.updated_at
          FROM courses c
          JOIN class_groups cg ON cg.id = c.class_group_id
          JOIN course_teachers ct ON ct.course_id = c.id
@@ -87,14 +88,14 @@ async function listVisibleCourses(user) {
       rows = res.rows || [];
     } else if (actor.role === 'ADMIN') {
       const res = await pool.query(
-        `SELECT c.id, c.code, c.title, c.description, c.class_group_id, cg.code AS class_group_code, c.created_at, c.updated_at
+        `SELECT c.id, c.code, c.title, c.description, c.class_group_id, cg.code AS class_group_code, c.is_course_chat_enabled, c.created_at, c.updated_at
          FROM courses c JOIN class_groups cg ON cg.id = c.class_group_id ORDER BY c.title`);
       rows = res.rows || [];
     } else {
       // STUDENT / COORDINATOR default to class group membership
       if (!actor.classGroupId) return [];
       const res = await pool.query(
-        `SELECT c.id, c.code, c.title, c.description, c.class_group_id, cg.code AS class_group_code, c.created_at, c.updated_at
+        `SELECT c.id, c.code, c.title, c.description, c.class_group_id, cg.code AS class_group_code, c.is_course_chat_enabled, c.created_at, c.updated_at
          FROM courses c JOIN class_groups cg ON cg.id = c.class_group_id
          WHERE c.class_group_id::text = $1 ORDER BY c.title`,
         [String(actor.classGroupId)]
@@ -113,7 +114,7 @@ async function listVisibleCourses(user) {
 async function getCourseById(courseId) {
   try {
     const res = await pool.query(
-      `SELECT c.id, c.code, c.title, c.description, c.class_group_id, cg.code AS class_group_code, c.created_at, c.updated_at
+      `SELECT c.id, c.code, c.title, c.description, c.class_group_id, cg.code AS class_group_code, c.is_course_chat_enabled, c.created_at, c.updated_at
        FROM courses c JOIN class_groups cg ON cg.id = c.class_group_id
        WHERE c.id::text = $1 LIMIT 1`,
       [String(courseId)]
@@ -128,7 +129,7 @@ async function getCourseById(courseId) {
 async function listAllCourses() {
   try {
     const res = await pool.query(
-      `SELECT c.id, c.code, c.title, c.description, c.class_group_id, cg.code AS class_group_code, c.created_at, c.updated_at
+      `SELECT c.id, c.code, c.title, c.description, c.class_group_id, cg.code AS class_group_code, c.is_course_chat_enabled, c.created_at, c.updated_at
        FROM courses c JOIN class_groups cg ON cg.id = c.class_group_id ORDER BY c.title`
     );
     const rows = res.rows || [];
@@ -142,10 +143,10 @@ async function listAllCourses() {
 async function listCourseAnnouncements(courseId) {
   try {
     const res = await pool.query(
-      `SELECT a.id, a.title, a.body, a.created_at, a.created_by_user_id FROM announcements a JOIN announcement_targets t ON t.announcement_id = a.id WHERE t.target_type = 'COURSE' AND t.target_value = $1 ORDER BY a.created_at DESC`,
+      `SELECT a.id, a.title, a.body, a.priority, a.created_at, a.created_by_user_id FROM announcements a JOIN announcement_targets t ON t.announcement_id = a.id WHERE t.target_type = 'COURSE' AND t.target_value = $1 ORDER BY a.created_at DESC`,
       [String(courseId)]
     );
-    return (res.rows || []).map((r) => ({ id: r.id, title: r.title, body: r.body, createdAt: r.created_at, createdBy: r.created_by_user_id }));
+    return (res.rows || []).map((r) => ({ id: r.id, title: r.title, body: r.body, priority: r.priority, createdAt: r.created_at, createdBy: r.created_by_user_id }));
   } catch (e) {
     console.error('[course] listCourseAnnouncements failed', e.message);
     return [];
@@ -173,14 +174,75 @@ async function createCourseAnnouncement(user, courseId, payload) {
 
   const title = payload.title;
   const body = payload.body;
+  const requestedPriority = String(payload.priority || 'NORMAL').toUpperCase();
+  const priority = requestedPriority === 'URGENT' ? 'URGENT' : 'NORMAL';
   if (!title || !body) return { status: 400, body: { message: 'title and body are required' } };
 
+  // Allow a single attachment payload or an attachments array.
+  const attachmentInputs = Array.isArray(payload.attachments)
+    ? payload.attachments
+    : (payload.attachmentUrl || payload.attachmentName)
+      ? [{
+          fileUrl: payload.attachmentUrl,
+          fileName: payload.attachmentName,
+          mimeType: payload.attachmentType,
+          fileSize: payload.attachmentSize
+        }]
+      : [];
+
   try {
-    const insert = await pool.query(`INSERT INTO announcements (scope, title, body, created_by_user_id) VALUES ('COURSE', $1, $2, $3) RETURNING id, created_at`, [title, body, String(actor.id)]);
+    const insert = await pool.query(
+      `INSERT INTO announcements (scope, title, body, priority, status, created_by_user_id, published_at)
+       VALUES ('COURSE', $1, $2, $3::announcement_priority_enum, 'PUBLISHED', $4, NOW())
+       RETURNING id, created_at`,
+      [title, body, priority, String(actor.id)]
+    );
     const announcementId = insert.rows[0]?.id;
     await pool.query(`INSERT INTO announcement_targets (announcement_id, target_type, target_value) VALUES ($1::uuid, 'COURSE', $2)`, [announcementId, String(courseId)]);
+
+    const createdAttachments = [];
+    for (const rawAttachment of attachmentInputs) {
+      const fileUrl = String(rawAttachment?.fileUrl || '').trim();
+      const fileName = String(rawAttachment?.fileName || '').trim() || 'Attachment';
+      if (!fileUrl) continue;
+
+      const attachmentInsert = await pool.query(
+        `INSERT INTO announcement_attachments (announcement_id, file_name, file_url, mime_type, file_size)
+         VALUES ($1::uuid, $2, $3, $4, $5)
+         RETURNING id, file_name, file_url, mime_type, file_size`,
+        [
+          announcementId,
+          fileName,
+          fileUrl,
+          rawAttachment?.mimeType ? String(rawAttachment.mimeType) : null,
+          Number.isFinite(Number(rawAttachment?.fileSize)) ? Number(rawAttachment.fileSize) : null
+        ]
+      );
+
+      const row = attachmentInsert.rows[0];
+      createdAttachments.push({
+        id: row.id,
+        title: row.file_name,
+        url: row.file_url,
+        type: row.mime_type,
+        size: row.file_size
+      });
+    }
+
     const createdAt = insert.rows[0]?.created_at ? new Date(insert.rows[0].created_at).toISOString() : new Date().toISOString();
-    return { status: 201, body: { id: announcementId, courseId, title, body, createdAt, createdBy: actor.id } };
+    return {
+      status: 201,
+      body: {
+        id: announcementId,
+        courseId,
+        title,
+        body,
+        priority,
+        createdAt,
+        createdBy: actor.id,
+        attachments: createdAttachments
+      }
+    };
   } catch (e) {
     console.error('[course] createCourseAnnouncement failed', e.message);
     return { status: 500, body: { message: 'Failed to create announcement.' } };
@@ -190,7 +252,7 @@ async function createCourseAnnouncement(user, courseId, payload) {
 async function listCourseAttachments(courseId) {
   try {
     const res = await pool.query(
-      `SELECT aa.id, aa.file_name AS title, aa.file_url AS url, aa.mime_type AS type, aa.file_size AS size, a.created_at AS uploaded_at
+      `SELECT aa.id, aa.announcement_id, aa.file_name AS title, aa.file_url AS url, aa.mime_type AS type, aa.file_size AS size, a.created_at AS uploaded_at
        FROM announcement_attachments aa
        JOIN announcement_targets t ON t.announcement_id = aa.announcement_id
        JOIN announcements a ON a.id = aa.announcement_id
@@ -198,7 +260,15 @@ async function listCourseAttachments(courseId) {
        ORDER BY a.created_at DESC`,
       [String(courseId)]
     );
-    return (res.rows || []).map((r) => ({ id: r.id, title: r.title, url: r.url, type: r.type, size: r.size, uploadedAt: r.uploaded_at ? new Date(r.uploaded_at).toISOString() : null }));
+    return (res.rows || []).map((r) => ({
+      id: r.id,
+      announcementId: r.announcement_id,
+      title: r.title,
+      url: r.url,
+      type: r.type,
+      size: r.size,
+      uploadedAt: r.uploaded_at ? new Date(r.uploaded_at).toISOString() : null
+    }));
   } catch (e) {
     console.error('[course] listCourseAttachments failed', e.message);
     return [];

@@ -158,11 +158,31 @@ async function formatChatForUser(chat, userId) {
       persistedCount = 0;
     }
 
+    let unreadCount = 0;
+    try {
+      const unread = await pool.query(
+        `SELECT COUNT(*)::int AS cnt
+         FROM messages m
+         WHERE m.chat_id::text = $1
+           AND m.sender_user_id::text != $2
+           AND NOT EXISTS (
+             SELECT 1
+             FROM message_reads mr
+             WHERE mr.message_id = m.id AND mr.user_id::text = $2
+           )`,
+        [String(chat.id), String(userId)]
+      );
+      unreadCount = Number(unread.rows?.[0]?.cnt || 0);
+    } catch (e) {
+      unreadCount = 0;
+    }
+
     return {
       ...chat,
       title,
       members,
       messageCount: persistedCount,
+      unreadCount,
       lastMessage: lastMessage ? { id: lastMessage.id, senderUserId: lastMessage.senderUserId, body: lastMessage.body, createdAt: lastMessage.createdAt } : null
     };
   } catch (e) {
@@ -294,7 +314,7 @@ async function createOrGetDirectChat(user, targetUserId, initialMessage) {
                 createdAt,
                 sender: { id: actor.id, name: actor.name || 'Unknown', role: actor.role || null }
               };
-              io.emit('message.created', newMessage);
+              io.to(`chat:${chatRow.id}`).emit('message.created', newMessage);
             }
           } catch (e) {
             console.warn('[group] emit initial message failed', e.message);

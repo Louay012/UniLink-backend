@@ -62,8 +62,9 @@ async function register({ firstName, lastName, email, password, role }) {
   );
 
   // 6) Create and return a JWT token
+  const normalizedRole = String(role || "STUDENT").toUpperCase();
   const token = jwt.sign(
-    { userId: user.id, role: role || "STUDENT" },
+    { userId: user.id, role: normalizedRole, roles: [normalizedRole] },
     process.env.JWT_SECRET,
     { expiresIn: "24h" }
   );
@@ -90,6 +91,22 @@ async function login({ email, password }) {
   }
 
   const user = result.rows[0];
+  const rolesResult = await pool.query(
+    `SELECT r.code
+     FROM user_roles ur
+     JOIN roles r ON r.id = ur.role_id
+     WHERE ur.user_id = $1
+     ORDER BY r.code`,
+    [user.id]
+  );
+  const roles = (rolesResult.rows || []).map((row) => row.code).filter(Boolean);
+  const primaryRole = roles.includes("ADMIN")
+    ? "ADMIN"
+    : roles.includes("COORDINATOR")
+      ? "COORDINATOR"
+      : roles.includes("TEACHER")
+        ? "TEACHER"
+        : roles[0] || user.role;
 
   // 2) Compare the password the user typed with the scrambled one in the DB
   const valid = await verifyPassword(password, user.password_hash);
@@ -99,7 +116,7 @@ async function login({ email, password }) {
 
   // 3) Create and return a JWT token
   const token = jwt.sign(
-    { userId: user.id, role: user.role },
+    { userId: user.id, role: primaryRole, roles },
     process.env.JWT_SECRET,
     { expiresIn: "24h" }
   );
@@ -110,7 +127,8 @@ async function login({ email, password }) {
       firstName: user.first_name,
       lastName: user.last_name,
       email: user.email,
-      role: user.role,
+      role: primaryRole,
+      roles,
     },
     token,
   };

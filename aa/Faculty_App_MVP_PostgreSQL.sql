@@ -268,10 +268,18 @@ CREATE TABLE IF NOT EXISTS message_attachments (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     message_id UUID NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
     file_name VARCHAR(255) NOT NULL,
-    file_url TEXT NOT NULL,
     mime_type VARCHAR(120),
     file_size BIGINT,
+    file_data BYTEA NOT NULL,
+    uploaded_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     CHECK (file_size IS NULL OR file_size >= 0)
+);
+
+CREATE TABLE IF NOT EXISTS message_reads (
+    message_id UUID NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    read_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (message_id, user_id)
 );
 
 -- ----------------------------------------------------------------------------

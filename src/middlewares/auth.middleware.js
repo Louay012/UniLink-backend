@@ -11,7 +11,8 @@ function attachResolvedUser(req, _res, next) {
 
   if (!authHeader || !authHeader.startsWith("Bearer ")) {
     if (devRole) {
-      req.user = { id: devUserId || null, role: String(devRole).toUpperCase() };
+      const role = String(devRole).toUpperCase();
+      req.user = { id: devUserId || null, role, roles: [role] };
       console.debug("[auth] Dev role header present. Using role:", req.user.role, "userId:", req.user.id);
       return next();
     }
@@ -34,9 +35,15 @@ function attachResolvedUser(req, _res, next) {
     // Verify the token using our secret key
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
     // Attach the user info to the request so any route can use it
+    const roles = Array.isArray(decoded.roles)
+      ? decoded.roles.map((role) => String(role).toUpperCase())
+      : decoded.role
+        ? [String(decoded.role).toUpperCase()]
+        : [];
     req.user = {
       id: decoded.userId,
-      role: decoded.role,
+      role: roles[0] || (decoded.role ? String(decoded.role).toUpperCase() : null),
+      roles,
     };
     console.debug("[auth] Token verified. userId:", decoded.userId, "role:", decoded.role);
   } catch (err) {
