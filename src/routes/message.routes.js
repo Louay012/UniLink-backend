@@ -7,5 +7,7 @@ router.get("/messages/:chatId", messageController.getMessages);
 router.post("/messages/:chatId", messageController.postMessage);
 router.get("/chats/:chatId/messages", messageController.getMessages);
 router.post("/chats/:chatId/messages", messageController.postMessage);
+router.patch("/chats/:chatId/messages/:messageId", messageController.putMessage);
+router.delete("/chats/:chatId/messages/:messageId", messageController.deleteMessage);
 
 module.exports = router;

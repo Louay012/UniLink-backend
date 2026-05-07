@@ -37,7 +37,37 @@ async function postMessage(req, res) {
   }
 }
 
+async function putMessage(req, res) {
+  if (!ensureAuthenticated(req, res)) {
+    return;
+  }
+
+  try {
+    const result = await messageService.updateChatMessage(req.user, req.params.chatId, req.params.messageId, req.body.body);
+    return res.status(result.status).json(result.body);
+  } catch (err) {
+    console.error('[controller] putMessage failed', err);
+    return res.status(500).json({ message: 'Failed to update message.' });
+  }
+}
+
+async function deleteMessage(req, res) {
+  if (!ensureAuthenticated(req, res)) {
+    return;
+  }
+
+  try {
+    const result = await messageService.deleteChatMessage(req.user, req.params.chatId, req.params.messageId);
+    return res.status(result.status).json(result.body);
+  } catch (err) {
+    console.error('[controller] deleteMessage failed', err);
+    return res.status(500).json({ message: 'Failed to delete message.' });
+  }
+}
+
 module.exports = {
   getMessages,
-  postMessage
+  postMessage,
+  putMessage,
+  deleteMessage
 };

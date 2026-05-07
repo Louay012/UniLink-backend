@@ -18,7 +18,7 @@ async function listChatMessages(user, chatId) {
 
   try {
     const res = await pool.query(
-      `SELECT m.id, m.chat_id, m.sender_user_id, m.body, m.created_at,
+      `SELECT m.id, m.chat_id, m.sender_user_id, m.body, m.created_at, m.is_deleted,
               u.first_name, u.last_name,
               (SELECT r.code FROM user_roles ur JOIN roles r ON r.id = ur.role_id WHERE ur.user_id = u.id LIMIT 1) AS role
        FROM messages m
@@ -34,7 +34,8 @@ async function listChatMessages(user, chatId) {
         id: r.id,
         chatId: r.chat_id,
         senderUserId: r.sender_user_id,
-        body: r.body,
+        body: r.is_deleted ? '' : r.body,
+        isDeleted: r.is_deleted || false,
         createdAt: r.created_at ? new Date(r.created_at).toISOString() : new Date().toISOString(),
         sender: {
           id: r.sender_user_id,
@@ -120,10 +121,10 @@ async function createChatMessage(user, chatId, body) {
       sender
     };
 
-    // broadcast
+    // broadcast to room
     try {
       const io = socketUtils.getIo();
-      if (io) io.emit("message.created", newMessage);
+      if (io) io.to(chat.id).emit("message.created", newMessage);
     } catch (e) {
       console.warn("[messages] socket emit failed", e.message);
     }
@@ -135,7 +136,129 @@ async function createChatMessage(user, chatId, body) {
   }
 }
 
+async function updateChatMessage(user, chatId, messageId, body) {
+  const actor = await resolveActor(user);
+  if (!actor) {
+    return { status: 403, body: { message: "Unable to resolve user context." } };
+  }
+
+  const chat = await getChatById(chatId);
+  if (!chat) {
+    return { status: 404, body: { message: "Chat not found." } };
+  }
+
+  if (!(await canAccessChat(actor.id, chat.id))) {
+    return { status: 403, body: { message: "You are not a member of this chat." } };
+  }
+
+  const cleanBody = (body || "").trim();
+  if (!cleanBody) {
+    return { status: 400, body: { message: "Message body is required." } };
+  }
+
+  try {
+    const msgRes = await pool.query(
+      "SELECT id, sender_user_id, body FROM messages WHERE id::text = $1 AND chat_id::text = $2 LIMIT 1",
+      [messageId, chat.id]
+    );
+    if (!msgRes.rows || !msgRes.rows[0]) {
+      return { status: 404, body: { message: "Message not found." } };
+    }
+
+    const msg = msgRes.rows[0];
+    if (String(msg.sender_user_id) !== String(actor.id)) {
+      return { status: 403, body: { message: "You can only edit your own messages." } };
+    }
+
+    const updRes = await pool.query(
+      "UPDATE messages SET body = $1, updated_at = NOW() WHERE id::text = $2 RETURNING id, body, created_at, updated_at",
+      [cleanBody, messageId]
+    );
+
+    const updated = updRes.rows[0];
+    const updatedMessage = {
+      id: updated.id,
+      chatId: chat.id,
+      senderUserId: actor.id,
+      body: updated.body,
+      createdAt: updated.created_at ? new Date(updated.created_at).toISOString() : new Date().toISOString(),
+      updatedAt: updated.updated_at ? new Date(updated.updated_at).toISOString() : new Date().toISOString()
+    };
+
+    try {
+      const io = socketUtils.getIo();
+      if (io) io.to(chat.id).emit("message.updated", updatedMessage);
+    } catch (e) {
+      console.warn("[messages] socket emit update failed", e.message);
+    }
+
+    return { status: 200, body: updatedMessage };
+  } catch (err) {
+    console.error("[messages] updateChatMessage failed", err);
+    return { status: 500, body: { message: "Failed to update message." } };
+  }
+}
+
+async function deleteChatMessage(user, chatId, messageId) {
+  const actor = await resolveActor(user);
+  if (!actor) {
+    return { status: 403, body: { message: "Unable to resolve user context." } };
+  }
+
+  const chat = await getChatById(chatId);
+  if (!chat) {
+    return { status: 404, body: { message: "Chat not found." } };
+  }
+
+  if (!(await canAccessChat(actor.id, chat.id))) {
+    return { status: 403, body: { message: "You are not a member of this chat." } };
+  }
+
+  try {
+    const msgRes = await pool.query(
+      "SELECT id, sender_user_id FROM messages WHERE id::text = $1 AND chat_id::text = $2 LIMIT 1",
+      [messageId, chat.id]
+    );
+    if (!msgRes.rows || !msgRes.rows[0]) {
+      return { status: 404, body: { message: "Message not found." } };
+    }
+
+    const msg = msgRes.rows[0];
+    if (String(msg.sender_user_id) !== String(actor.id)) {
+      return { status: 403, body: { message: "You can only delete your own messages." } };
+    }
+
+    const updRes = await pool.query(
+      "UPDATE messages SET is_deleted = TRUE, body = '', updated_at = NOW() WHERE id::text = $1 RETURNING id, updated_at",
+      [messageId]
+    );
+
+    const deletedMessage = {
+      id: messageId,
+      chatId: chat.id,
+      isDeleted: true,
+      body: '',
+      senderUserId: msg.sender_user_id,
+      sender: { id: actor.id, name: actor.name || 'Unknown', role: actor.role || null }
+    };
+
+    try {
+      const io = socketUtils.getIo();
+      if (io) io.to(chat.id).emit("message.deleted", deletedMessage);
+    } catch (e) {
+      console.warn("[messages] socket emit delete failed", e.message);
+    }
+
+    return { status: 200, body: { message: "Message deleted." } };
+  } catch (err) {
+    console.error("[messages] deleteChatMessage failed", err);
+    return { status: 500, body: { message: "Failed to delete message." } };
+  }
+}
+
 module.exports = {
   listChatMessages,
-  createChatMessage
+  createChatMessage,
+  updateChatMessage,
+  deleteChatMessage
 };
