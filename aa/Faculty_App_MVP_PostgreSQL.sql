@@ -355,3 +355,17 @@ COMMIT;
 -- =============================================================================
 ALTER TABLE users 
 ADD COLUMN IF NOT EXISTS password_hash VARCHAR(255);
+
+-- =============================================================================
+-- Message Read Tracking (Unread Counts)
+-- =============================================================================
+CREATE TABLE IF NOT EXISTS message_reads (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  chat_id UUID NOT NULL REFERENCES chats(id) ON DELETE CASCADE,
+  last_read_message_id UUID REFERENCES messages(id) ON DELETE SET NULL,
+  read_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE(user_id, chat_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_message_reads_user_chat ON message_reads(user_id, chat_id);

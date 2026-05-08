@@ -31,14 +31,18 @@ socketUtils.setIo(io);
 io.on("connection", (socket) => {
   console.log("[socket] connected", socket.id);
 
-  socket.on("chat:join", ({ chatId } = {}) => {
-    if (!chatId) return;
-    socket.join(`chat:${chatId}`);
+  socket.on("chat:join", ({ chatId }) => {
+    if (chatId) {
+      socket.join(chatId);
+      console.log(`[socket] ${socket.id} joined chat ${chatId}`);
+    }
   });
 
-  socket.on("chat:leave", ({ chatId } = {}) => {
-    if (!chatId) return;
-    socket.leave(`chat:${chatId}`);
+  socket.on("chat:leave", ({ chatId }) => {
+    if (chatId) {
+      socket.leave(chatId);
+      console.log(`[socket] ${socket.id} left chat ${chatId}`);
+    }
   });
 
   socket.on("disconnect", () => {

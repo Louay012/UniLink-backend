@@ -160,19 +160,15 @@ async function formatChatForUser(chat, userId) {
 
     let unreadCount = 0;
     try {
-      const unread = await pool.query(
-        `SELECT COUNT(*)::int AS cnt
-         FROM messages m
-         WHERE m.chat_id::text = $1
-           AND m.sender_user_id::text != $2
-           AND NOT EXISTS (
-             SELECT 1
-             FROM message_reads mr
-             WHERE mr.message_id = m.id AND mr.user_id::text = $2
-           )`,
+      const unreadRes = await pool.query(
+        `SELECT COUNT(*)::int AS cnt FROM messages m
+         WHERE m.chat_id::text = $1 AND m.sender_user_id::text != $2 AND m.created_at > COALESCE(
+           (SELECT mr.read_at FROM message_reads mr WHERE mr.user_id::text = $2 AND mr.chat_id::text = $1),
+           '1970-01-01'::timestamp
+         )`,
         [String(chat.id), String(userId)]
       );
-      unreadCount = Number(unread.rows?.[0]?.cnt || 0);
+      unreadCount = Number(unreadRes.rows[0]?.cnt || 0);
     } catch (e) {
       unreadCount = 0;
     }
@@ -298,30 +294,30 @@ async function createOrGetDirectChat(user, targetUserId, initialMessage) {
     }
 
     if (initialMessage) {
+      try {
+        const ins = await pool.query(`INSERT INTO messages (chat_id, sender_user_id, body) VALUES ($1::uuid, $2::uuid, $3) RETURNING id, created_at`, [chatRow.id, actor.id, initialMessage]);
+        const createdAt = ins.rows[0]?.created_at ? new Date(ins.rows[0].created_at).toISOString() : new Date().toISOString();
+        // emit socket event to the specific chat room
         try {
-          const ins = await pool.query(`INSERT INTO messages (chat_id, sender_user_id, body) VALUES ($1::uuid, $2::uuid, $3) RETURNING id, created_at`, [chatRow.id, actor.id, initialMessage]);
-          const createdAt = ins.rows[0]?.created_at ? new Date(ins.rows[0].created_at).toISOString() : new Date().toISOString();
-          // emit socket event so clients see the initial message in real-time
-          try {
-            const socketUtils = require('../socket');
-            const io = socketUtils.getIo();
-            if (io) {
-              const newMessage = {
-                id: ins.rows[0]?.id,
-                chatId: chatRow.id,
-                senderUserId: actor.id,
-                body: initialMessage,
-                createdAt,
-                sender: { id: actor.id, name: actor.name || 'Unknown', role: actor.role || null }
-              };
-              io.to(`chat:${chatRow.id}`).emit('message.created', newMessage);
-            }
-          } catch (e) {
-            console.warn('[group] emit initial message failed', e.message);
+          const socketUtils = require('../socket');
+          const io = socketUtils.getIo();
+          if (io) {
+            const newMessage = {
+              id: ins.rows[0]?.id,
+              chatId: chatRow.id,
+              senderUserId: actor.id,
+              body: initialMessage,
+              createdAt,
+              sender: { id: actor.id, name: actor.name || 'Unknown', role: actor.role || null }
+            };
+            io.to(chatRow.id).emit('message.created', newMessage);
           }
         } catch (e) {
-          console.error('[group] insert initialMessage failed', e.message);
+          console.warn('[group] emit initial message failed', e.message);
         }
+      } catch (e) {
+        console.error('[group] insert initialMessage failed', e.message);
+      }
     }
 
     return { status: wasCreated ? 201 : 200, body: { chat: await formatChatForUser(chatRow, actor.id) } };
@@ -343,6 +339,52 @@ async function getChatById(chatId) {
 
 }
 
+async function markChatRead(user, chatId) {
+  const actor = await resolveActor(user);
+  if (!actor) {
+    return { status: 403, body: { message: "Unable to resolve user context." } };
+  }
+
+  const chat = await getChatById(chatId);
+  if (!chat) {
+    return { status: 404, body: { message: "Chat not found." } };
+  }
+
+  if (!(await canAccessChat(actor.id, chat.id))) {
+    return { status: 403, body: { message: "You are not a member of this chat." } };
+  }
+
+  try {
+    const latestMsg = await pool.query(
+      "SELECT id FROM messages WHERE chat_id::text = $1 ORDER BY created_at DESC LIMIT 1",
+      [chat.id]
+    );
+
+    const lastReadMessageId = latestMsg.rows[0]?.id || null;
+
+    await pool.query(
+      `INSERT INTO message_reads (user_id, chat_id, last_read_message_id, read_at)
+       VALUES ($1, $2, $3, NOW())
+       ON CONFLICT (user_id, chat_id) 
+       DO UPDATE SET last_read_message_id = EXCLUDED.last_read_message_id, read_at = EXCLUDED.read_at`,
+      [actor.id, chat.id, lastReadMessageId]
+    );
+
+    try {
+      const socketUtils = require('../socket');
+      const io = socketUtils.getIo();
+      if (io) io.to(chat.id).emit('chat.read', { chatId: chat.id, userId: actor.id });
+    } catch (e) {
+      console.warn('[group] emit chat.read failed', e.message);
+    }
+
+    return { status: 200, body: { message: "Chat marked as read." } };
+  } catch (err) {
+    console.error('[group] markChatRead failed', err);
+    return { status: 500, body: { message: "Failed to mark chat as read." } };
+  }
+}
+
 module.exports = {
   getUserById,
   canAccessChat,
@@ -352,5 +394,6 @@ module.exports = {
   listUserChats,
   createOrGetDirectChat,
   getChatById,
-  canDirectMessage
+  canDirectMessage,
+  markChatRead
 };

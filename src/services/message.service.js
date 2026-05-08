@@ -203,10 +203,9 @@ async function listChatMessages(user, chatId, options = {}) {
     const before = beforeDate && !Number.isNaN(beforeDate.getTime()) ? beforeDate.toISOString() : null;
 
     const res = await pool.query(
-      `SELECT m.id, m.chat_id, m.sender_user_id, m.body, m.is_deleted, m.created_at, m.updated_at,
-              CONCAT(COALESCE(u.first_name, ''), ' ', COALESCE(u.last_name, '')) AS sender_name,
-              (SELECT r.code FROM user_roles ur JOIN roles r ON r.id = ur.role_id WHERE ur.user_id = u.id LIMIT 1) AS role,
-              mr.read_at
+      `SELECT m.id, m.chat_id, m.sender_user_id, m.body, m.created_at, m.is_deleted,
+              u.first_name, u.last_name,
+              (SELECT r.code FROM user_roles ur JOIN roles r ON r.id = ur.role_id WHERE ur.user_id = u.id LIMIT 1) AS role
        FROM messages m
        JOIN users u ON u.id = m.sender_user_id
        LEFT JOIN message_reads mr ON mr.message_id = m.id AND mr.user_id = $2::uuid
@@ -217,36 +216,23 @@ async function listChatMessages(user, chatId, options = {}) {
       [chat.id, actor.id, before, pageLimit + 1]
     );
 
-    const hasOlder = (res.rows || []).length > pageLimit;
-    const pageRows = hasOlder ? res.rows.slice(0, pageLimit) : res.rows;
-    const orderedRows = [...(pageRows || [])].reverse();
-
-    const messageIds = orderedRows.map((row) => row.id);
-    const attachmentMap = await hydrateMessageAttachments(messageIds);
-
-    const items = orderedRows.map((r) => ({
-      id: r.id,
-      chatId: r.chat_id,
-      senderUserId: r.sender_user_id,
-      body: r.is_deleted ? "" : r.body,
-      isDeleted: Boolean(r.is_deleted),
-      isEdited: Boolean(
-        r.updated_at &&
-        r.created_at &&
-        new Date(r.updated_at).getTime() > new Date(r.created_at).getTime()
-      ),
-      isRead: String(r.sender_user_id) === String(actor.id) ? true : Boolean(r.read_at),
-      createdAt: r.created_at ? new Date(r.created_at).toISOString() : new Date().toISOString(),
-      updatedAt: r.updated_at ? new Date(r.updated_at).toISOString() : null,
-      sender: {
-        id: r.sender_user_id,
-        name: (r.sender_name || "").trim() || "Unknown",
-        role: r.role || null
-      },
-      attachments: attachmentMap.get(String(r.id)) || []
-    }));
-
-    const oldestCreatedAt = items[0]?.createdAt || null;
+    const items = (res.rows || []).map((r) => {
+      const senderName = `${r.first_name || ''} ${r.last_name || ''}`.trim();
+      const message = {
+        id: r.id,
+        chatId: r.chat_id,
+        senderUserId: r.sender_user_id,
+        body: r.is_deleted ? '' : r.body,
+        isDeleted: r.is_deleted || false,
+        createdAt: r.created_at ? new Date(r.created_at).toISOString() : new Date().toISOString(),
+        sender: {
+          id: r.sender_user_id,
+          name: senderName || 'Unknown',
+          role: r.role || null
+        }
+      };
+      return message;
+    });
 
     return {
       status: 200,
@@ -348,13 +334,12 @@ async function createChatMessageWithAttachments(user, chatId, body, attachments 
       attachments: createdAttachments
     };
 
+    // broadcast to room
     try {
       const io = socketUtils.getIo();
-      if (io) {
-        io.to(getChatRoom(chat.id)).emit("message.created", newMessage);
-      }
-    } catch (socketError) {
-      console.warn("[messages] socket emit failed", socketError.message);
+      if (io) io.to(chat.id).emit("message.created", newMessage);
+    } catch (e) {
+      console.warn("[messages] socket emit failed", e.message);
     }
 
     return { status: 201, body: newMessage };
@@ -365,15 +350,18 @@ async function createChatMessageWithAttachments(user, chatId, body, attachments 
 }
 
 async function updateChatMessage(user, chatId, messageId, body) {
-  await ensureMessagingTables();
-
-  if (!isValidUuid(chatId) || !isValidUuid(messageId)) {
-    return { status: 400, body: { message: "Invalid chat or message ID." } };
+  const actor = await resolveActor(user);
+  if (!actor) {
+    return { status: 403, body: { message: "Unable to resolve user context." } };
   }
 
-  const actor = await resolveActor(user);
-  if (!actor || !isValidUuid(actor.id)) {
-    return { status: 403, body: { message: "Unable to resolve user context." } };
+  const chat = await getChatById(chatId);
+  if (!chat) {
+    return { status: 404, body: { message: "Chat not found." } };
+  }
+
+  if (!(await canAccessChat(actor.id, chat.id))) {
+    return { status: 403, body: { message: "You are not a member of this chat." } };
   }
 
   const cleanBody = (body || "").trim();
@@ -381,65 +369,52 @@ async function updateChatMessage(user, chatId, messageId, body) {
     return { status: 400, body: { message: "Message body is required." } };
   }
 
-  const chat = await getChatById(chatId);
-  if (!chat) {
-    return { status: 404, body: { message: "Chat not found." } };
-  }
-
-  if (!(await canAccessChat(actor.id, chat.id))) {
-    return { status: 403, body: { message: "You are not a member of this chat." } };
-  }
-
   try {
-    const existing = await pool.query(
-      `SELECT id, chat_id, sender_user_id, body, is_deleted, created_at, updated_at
-       FROM messages
-       WHERE id = $1::uuid AND chat_id = $2::uuid
-       LIMIT 1`,
-      [String(messageId), String(chat.id)]
+    const msgRes = await pool.query(
+      "SELECT id, sender_user_id, body FROM messages WHERE id::text = $1 AND chat_id::text = $2 LIMIT 1",
+      [messageId, chat.id]
     );
-
-    const message = existing.rows?.[0];
-    if (!message) {
+    if (!msgRes.rows || !msgRes.rows[0]) {
       return { status: 404, body: { message: "Message not found." } };
     }
-    if (String(message.sender_user_id) !== String(actor.id)) {
+
+    const msg = msgRes.rows[0];
+    if (String(msg.sender_user_id) !== String(actor.id)) {
       return { status: 403, body: { message: "You can only edit your own messages." } };
     }
-    if (message.is_deleted) {
-      return { status: 400, body: { message: "Deleted messages cannot be edited." } };
-    }
 
-    const updated = await pool.query(
-      `UPDATE messages
-       SET body = $1, updated_at = NOW()
-       WHERE id = $2::uuid
-       RETURNING id, chat_id, sender_user_id, body, is_deleted, created_at, updated_at`,
-      [cleanBody, String(messageId)]
+    const updRes = await pool.query(
+      "UPDATE messages SET body = $1, updated_at = NOW() WHERE id::text = $2 RETURNING id, body, created_at, updated_at",
+      [cleanBody, messageId]
     );
 
-    const payload = await buildMessagePayload(updated.rows[0], actor.id);
-    const io = socketUtils.getIo();
-    if (io) {
-      io.to(getChatRoom(chat.id)).emit("message.updated", payload);
+    const updated = updRes.rows[0];
+    const updatedMessage = {
+      id: updated.id,
+      chatId: chat.id,
+      senderUserId: actor.id,
+      body: updated.body,
+      createdAt: updated.created_at ? new Date(updated.created_at).toISOString() : new Date().toISOString(),
+      updatedAt: updated.updated_at ? new Date(updated.updated_at).toISOString() : new Date().toISOString()
+    };
+
+    try {
+      const io = socketUtils.getIo();
+      if (io) io.to(chat.id).emit("message.updated", updatedMessage);
+    } catch (e) {
+      console.warn("[messages] socket emit update failed", e.message);
     }
 
-    return { status: 200, body: payload };
-  } catch (error) {
-    console.error("[messages] updateChatMessage failed", error);
+    return { status: 200, body: updatedMessage };
+  } catch (err) {
+    console.error("[messages] updateChatMessage failed", err);
     return { status: 500, body: { message: "Failed to update message." } };
   }
 }
 
 async function deleteChatMessage(user, chatId, messageId) {
-  await ensureMessagingTables();
-
-  if (!isValidUuid(chatId) || !isValidUuid(messageId)) {
-    return { status: 400, body: { message: "Invalid chat or message ID." } };
-  }
-
   const actor = await resolveActor(user);
-  if (!actor || !isValidUuid(actor.id)) {
+  if (!actor) {
     return { status: 403, body: { message: "Unable to resolve user context." } };
   }
 
@@ -453,163 +428,50 @@ async function deleteChatMessage(user, chatId, messageId) {
   }
 
   try {
-    const existing = await pool.query(
-      `SELECT id, sender_user_id, is_deleted
-       FROM messages
-       WHERE id = $1::uuid AND chat_id = $2::uuid
-       LIMIT 1`,
-      [String(messageId), String(chat.id)]
+    const msgRes = await pool.query(
+      "SELECT id, sender_user_id FROM messages WHERE id::text = $1 AND chat_id::text = $2 LIMIT 1",
+      [messageId, chat.id]
     );
-
-    const message = existing.rows?.[0];
-    if (!message) {
+    if (!msgRes.rows || !msgRes.rows[0]) {
       return { status: 404, body: { message: "Message not found." } };
     }
-    if (String(message.sender_user_id) !== String(actor.id)) {
+
+    const msg = msgRes.rows[0];
+    if (String(msg.sender_user_id) !== String(actor.id)) {
       return { status: 403, body: { message: "You can only delete your own messages." } };
     }
-    if (message.is_deleted) {
-      return { status: 200, body: { id: message.id, chatId: chat.id, isDeleted: true } };
-    }
 
-    const deleted = await pool.query(
-      `UPDATE messages
-       SET is_deleted = TRUE, body = '', updated_at = NOW()
-       WHERE id = $1::uuid
-       RETURNING id, chat_id, sender_user_id, body, is_deleted, created_at, updated_at`,
-      [String(messageId)]
+    const updRes = await pool.query(
+      "UPDATE messages SET is_deleted = TRUE, body = '', updated_at = NOW() WHERE id::text = $1 RETURNING id, updated_at",
+      [messageId]
     );
 
-    const payload = await buildMessagePayload(deleted.rows[0], actor.id);
-    const io = socketUtils.getIo();
-    if (io) {
-      io.to(getChatRoom(chat.id)).emit("message.deleted", payload);
-    }
-
-    return { status: 200, body: payload };
-  } catch (error) {
-    console.error("[messages] deleteChatMessage failed", error);
-    return { status: 500, body: { message: "Failed to delete message." } };
-  }
-}
-
-async function markChatRead(user, chatId) {
-  await ensureMessagingTables();
-
-  if (!isValidUuid(chatId)) {
-    return { status: 400, body: { message: "Invalid chat ID." } };
-  }
-
-  const actor = await resolveActor(user);
-  if (!actor || !isValidUuid(actor.id)) {
-    console.warn("[messages] markChatRead actor resolution failed", {
-      hasUser: Boolean(user),
-      userId: user?.id || null,
-      role: user?.role || null
-    });
-    return { status: 403, body: { message: "Unable to resolve user context." } };
-  }
-
-  const chat = await getChatById(chatId);
-  if (!chat) {
-    return { status: 404, body: { message: "Chat not found." } };
-  }
-
-  const isMember = await canAccessChat(actor.id, chat.id);
-  if (!isMember) {
-    console.warn("[messages] markChatRead membership denied", { actorId: actor.id, chatId: chat.id });
-    return { status: 403, body: { message: "You are not a member of this chat." } };
-  }
-
-  try {
-    await pool.query(
-      `INSERT INTO message_reads (message_id, user_id, read_at)
-       SELECT m.id, $1::uuid, NOW()
-       FROM messages m
-       WHERE m.chat_id = $2::uuid
-         AND m.sender_user_id != $1::uuid
-         AND NOT EXISTS (
-           SELECT 1 FROM message_reads mr
-           WHERE mr.message_id = m.id AND mr.user_id = $1::uuid
-         )`,
-      [String(actor.id), String(chat.id)]
-    );
-
-    const io = socketUtils.getIo();
-    if (io) {
-      io.to(getChatRoom(chat.id)).emit("chat.read", {
-        chatId: chat.id,
-        userId: actor.id,
-        readAt: new Date().toISOString()
-      });
-    }
-
-    return { status: 200, body: { success: true } };
-  } catch (error) {
-    console.error("[messages] markChatRead failed", {
-      message: error.message,
-      code: error.code,
-      actorId: actor.id,
-      chatId: chat.id
-    });
-    return { status: 500, body: { message: "Failed to mark messages as read." } };
-  }
-}
-
-async function getChatAttachment(user, chatId, attachmentId) {
-  await ensureMessagingTables();
-
-  if (!isValidUuid(chatId) || !isValidUuid(attachmentId)) {
-    return { status: 400, body: { message: "Invalid chat or attachment ID." } };
-  }
-
-  const actor = await resolveActor(user);
-  if (!actor || !isValidUuid(actor.id)) {
-    return { status: 403, body: { message: "Unable to resolve user context." } };
-  }
-
-  if (!(await canAccessChat(actor.id, chatId))) {
-    return { status: 403, body: { message: "You are not a member of this chat." } };
-  }
-
-  try {
-    const res = await pool.query(
-      `SELECT ma.id, ma.file_name, ma.mime_type, ma.file_size, ma.file_data
-       FROM message_attachments ma
-       JOIN messages m ON m.id = ma.message_id
-       WHERE ma.id = $1::uuid AND m.chat_id = $2::uuid
-       LIMIT 1`,
-      [attachmentId, chatId]
-    );
-
-    const row = res.rows?.[0];
-    if (!row) {
-      return { status: 404, body: { message: "Attachment not found." } };
-    }
-
-    return {
-      status: 200,
-      body: {
-        id: row.id,
-        fileName: row.file_name,
-        mimeType: row.mime_type,
-        fileSize: row.file_size,
-        content: row.file_data
-      }
+    const deletedMessage = {
+      id: messageId,
+      chatId: chat.id,
+      isDeleted: true,
+      body: '',
+      senderUserId: msg.sender_user_id,
+      sender: { id: actor.id, name: actor.name || 'Unknown', role: actor.role || null }
     };
-  } catch (error) {
-    console.error("[messages] getChatAttachment failed", error);
-    return { status: 500, body: { message: "Failed to load attachment." } };
+
+    try {
+      const io = socketUtils.getIo();
+      if (io) io.to(chat.id).emit("message.deleted", deletedMessage);
+    } catch (e) {
+      console.warn("[messages] socket emit delete failed", e.message);
+    }
+
+    return { status: 200, body: { message: "Message deleted." } };
+  } catch (err) {
+    console.error("[messages] deleteChatMessage failed", err);
+    return { status: 500, body: { message: "Failed to delete message." } };
   }
 }
 
 module.exports = {
   listChatMessages,
   createChatMessage,
-  createChatMessageWithAttachments,
   updateChatMessage,
-  deleteChatMessage,
-  markChatRead,
-  getChatAttachment,
-  getChatRoom
+  deleteChatMessage
 };

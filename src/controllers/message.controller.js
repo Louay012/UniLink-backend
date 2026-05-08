@@ -60,87 +60,21 @@ async function postMessage(req, res) {
   }
 }
 
-async function postMessageWithFiles(req, res) {
+async function putMessage(req, res) {
   if (!ensureAuthenticated(req, res)) {
     return;
   }
 
   try {
-    const uploadError = normalizeUploadError(req.fileValidationError);
-    if (uploadError) {
-      return res.status(uploadError.status).json(uploadError.body);
-    }
-
-    const files = Array.isArray(req.files) ? req.files : [];
-    const attachments = files.map((file) => ({
-      fileName: file.originalname,
-      mimeType: file.mimetype,
-      fileSize: file.size,
-      content: file.buffer
-    }));
-
-    const result = await messageService.createChatMessageWithAttachments(
-      req.user,
-      req.params.chatId,
-      req.body.body,
-      attachments
-    );
+    const result = await messageService.updateChatMessage(req.user, req.params.chatId, req.params.messageId, req.body.body);
     return res.status(result.status).json(result.body);
   } catch (err) {
-    console.error('[controller] postMessageWithFiles failed', err);
-    return res.status(500).json({ message: 'Failed to post message with files.' });
+    console.error('[controller] putMessage failed', err);
+    return res.status(500).json({ message: 'Failed to update message.' });
   }
 }
 
-async function downloadAttachment(req, res) {
-  if (!ensureAuthenticated(req, res)) {
-    return;
-  }
-
-  try {
-    const result = await messageService.getChatAttachment(
-      req.user,
-      req.params.chatId,
-      req.params.attachmentId
-    );
-
-    if (result.status !== 200) {
-      return res.status(result.status).json(result.body);
-    }
-
-    const { fileName, mimeType, fileSize, content } = result.body;
-    res.setHeader("Content-Type", mimeType || "application/octet-stream");
-    if (Number.isFinite(Number(fileSize))) {
-      res.setHeader("Content-Length", String(fileSize));
-    }
-    res.setHeader("Content-Disposition", `inline; filename="${String(fileName || "attachment").replace(/\"/g, "")}"`);
-    return res.status(200).send(content);
-  } catch (err) {
-    console.error("[controller] downloadAttachment failed", err);
-    return res.status(500).json({ message: "Failed to download attachment." });
-  }
-}
-
-async function patchMessage(req, res) {
-  if (!ensureAuthenticated(req, res)) {
-    return;
-  }
-
-  try {
-    const result = await messageService.updateChatMessage(
-      req.user,
-      req.params.chatId,
-      req.params.messageId,
-      req.body.body
-    );
-    return res.status(result.status).json(result.body);
-  } catch (err) {
-    console.error('[controller] patchMessage failed', err);
-    return res.status(500).json({ message: 'Failed to edit message.' });
-  }
-}
-
-async function removeMessage(req, res) {
+async function deleteMessage(req, res) {
   if (!ensureAuthenticated(req, res)) {
     return;
   }
@@ -149,31 +83,14 @@ async function removeMessage(req, res) {
     const result = await messageService.deleteChatMessage(req.user, req.params.chatId, req.params.messageId);
     return res.status(result.status).json(result.body);
   } catch (err) {
-    console.error('[controller] removeMessage failed', err);
+    console.error('[controller] deleteMessage failed', err);
     return res.status(500).json({ message: 'Failed to delete message.' });
-  }
-}
-
-async function markRead(req, res) {
-  if (!ensureAuthenticated(req, res)) {
-    return;
-  }
-
-  try {
-    const result = await messageService.markChatRead(req.user, req.params.chatId);
-    return res.status(result.status).json(result.body);
-  } catch (err) {
-    console.error('[controller] markRead failed', err);
-    return res.status(500).json({ message: 'Failed to mark chat as read.' });
   }
 }
 
 module.exports = {
   getMessages,
   postMessage,
-  postMessageWithFiles,
-  downloadAttachment,
-  patchMessage,
-  removeMessage,
-  markRead
+  putMessage,
+  deleteMessage
 };
