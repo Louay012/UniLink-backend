@@ -88,9 +88,45 @@ async function deleteMessage(req, res) {
   }
 }
 
+async function postMessageWithFiles(req, res) {
+  if (!ensureAuthenticated(req, res)) {
+    return;
+  }
+
+  // Handle multer upload errors passed via req.fileValidationError
+  const uploadError = normalizeUploadError(req.fileValidationError);
+  if (uploadError) {
+    return res.status(uploadError.status).json(uploadError.body);
+  }
+
+  try {
+    const body = typeof req.body.body === 'string' ? req.body.body : '';
+    const files = Array.isArray(req.files) ? req.files : [];
+
+    const attachments = files.map((file) => ({
+      fileName: file.originalname,
+      mimeType: file.mimetype,
+      fileSize: file.size,
+      content: file.buffer  // multer memoryStorage provides buffer
+    }));
+
+    const result = await messageService.createChatMessageWithAttachments(
+      req.user,
+      req.params.chatId,
+      body,
+      attachments
+    );
+    return res.status(result.status).json(result.body);
+  } catch (err) {
+    console.error('[controller] postMessageWithFiles failed', err);
+    return res.status(500).json({ message: 'Failed to post message with files.' });
+  }
+}
+
 module.exports = {
   getMessages,
   postMessage,
   putMessage,
-  deleteMessage
+  deleteMessage,
+  postMessageWithFiles
 };

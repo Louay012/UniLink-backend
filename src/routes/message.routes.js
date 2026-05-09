@@ -15,6 +15,14 @@ router.get("/messages/:chatId", messageController.getMessages);
 router.post("/messages/:chatId", messageController.postMessage);
 router.get("/chats/:chatId/messages", messageController.getMessages);
 router.post("/chats/:chatId/messages", messageController.postMessage);
+router.post("/chats/:chatId/messages/upload", (req, res) => {
+  upload.array("files", 10)(req, res, (err) => {
+    if (err) {
+      req.fileValidationError = err;
+    }
+    return messageController.postMessageWithFiles(req, res);
+  });
+});
 router.patch("/chats/:chatId/messages/:messageId", messageController.putMessage);
 router.delete("/chats/:chatId/messages/:messageId", messageController.deleteMessage);
 

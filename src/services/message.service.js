@@ -15,12 +15,15 @@ function isValidUuid(value) {
 async function ensureMessagingTables() {
   if (!messagingTablesReadyPromise) {
     messagingTablesReadyPromise = (async () => {
+      // message_reads already exists with schema (user_id, chat_id, last_read_message_id, read_at)
+      // Only create if it doesn't exist at all
       await pool.query(
         `CREATE TABLE IF NOT EXISTS message_reads (
-           message_id UUID NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
            user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+           chat_id UUID NOT NULL REFERENCES chats(id) ON DELETE CASCADE,
+           last_read_message_id UUID REFERENCES messages(id) ON DELETE SET NULL,
            read_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-           PRIMARY KEY (message_id, user_id)
+           PRIMARY KEY (user_id, chat_id)
          )`
       );
 
@@ -203,22 +206,29 @@ async function listChatMessages(user, chatId, options = {}) {
     const before = beforeDate && !Number.isNaN(beforeDate.getTime()) ? beforeDate.toISOString() : null;
 
     const res = await pool.query(
-      `SELECT m.id, m.chat_id, m.sender_user_id, m.body, m.created_at, m.is_deleted,
+      `SELECT m.id, m.chat_id, m.sender_user_id, m.body, m.created_at, m.updated_at, m.is_deleted,
               u.first_name, u.last_name,
               (SELECT r.code FROM user_roles ur JOIN roles r ON r.id = ur.role_id WHERE ur.user_id = u.id LIMIT 1) AS role
        FROM messages m
        JOIN users u ON u.id = m.sender_user_id
-       LEFT JOIN message_reads mr ON mr.message_id = m.id AND mr.user_id = $2::uuid
        WHERE m.chat_id = $1::uuid
-         AND ($3::timestamptz IS NULL OR m.created_at < $3::timestamptz)
+         AND ($2::timestamptz IS NULL OR m.created_at < $2::timestamptz)
        ORDER BY m.created_at DESC, m.id DESC
-       LIMIT $4`,
-      [chat.id, actor.id, before, pageLimit + 1]
+       LIMIT $3`,
+      [chat.id, before, pageLimit + 1]
     );
 
-    const items = (res.rows || []).map((r) => {
+    const allRows = res.rows || [];
+    const hasOlder = allRows.length > pageLimit;
+    const pageRows = hasOlder ? allRows.slice(0, pageLimit) : allRows;
+
+    // Hydrate attachments for all messages on this page
+    const messageIds = pageRows.map((r) => r.id);
+    const attachmentMap = await hydrateMessageAttachments(messageIds);
+
+    const items = pageRows.map((r) => {
       const senderName = `${r.first_name || ''} ${r.last_name || ''}`.trim();
-      const message = {
+      return {
         id: r.id,
         chatId: r.chat_id,
         senderUserId: r.sender_user_id,
@@ -229,10 +239,14 @@ async function listChatMessages(user, chatId, options = {}) {
           id: r.sender_user_id,
           name: senderName || 'Unknown',
           role: r.role || null
-        }
+        },
+        attachments: attachmentMap.get(String(r.id)) || []
       };
-      return message;
     });
+
+    const oldestCreatedAt = items.length
+      ? items[items.length - 1].createdAt
+      : null;
 
     return {
       status: 200,
@@ -472,6 +486,7 @@ async function deleteChatMessage(user, chatId, messageId) {
 module.exports = {
   listChatMessages,
   createChatMessage,
+  createChatMessageWithAttachments,
   updateChatMessage,
   deleteChatMessage
 };
