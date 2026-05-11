@@ -134,4 +134,22 @@ async function login({ email, password }) {
   };
 }
 
-module.exports = { register, login };
+// ─── SEARCH USERS ─────────────────────────────────────────────────────────────
+async function searchUsers(q) {
+  if (!q) return [];
+  const searchQuery = `%${q}%`;
+  const result = await pool.query(
+    `SELECT id, first_name || ' ' || last_name AS name, email
+     FROM users
+     WHERE first_name ILIKE $1 
+        OR last_name ILIKE $1 
+        OR first_name || ' ' || last_name ILIKE $1 
+        OR email ILIKE $1
+     ORDER BY first_name, last_name
+     LIMIT 20`,
+    [searchQuery]
+  );
+  return result.rows;
+}
+
+module.exports = { register, login, searchUsers };

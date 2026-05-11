@@ -31,6 +31,14 @@ socketUtils.setIo(io);
 io.on("connection", (socket) => {
   console.log("[socket] connected", socket.id);
 
+  // User joins their personal notification room
+  socket.on("user:join", ({ userId }) => {
+    if (userId) {
+      socket.join(String(userId));
+      console.log(`[socket] ${socket.id} joined user room ${userId}`);
+    }
+  });
+
   socket.on("chat:join", ({ chatId }) => {
     if (chatId) {
       socket.join(chatId);

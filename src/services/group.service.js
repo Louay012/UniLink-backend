@@ -90,21 +90,7 @@ async function studentCanMessageTeacher(student, teacher) {
 
 async function canDirectMessage(sender, target) {
   if (!sender || !target || sender.id === target.id) return false;
-
-  const pair = [sender.role || '', target.role || ''].sort().join('-');
-
-  if (pair === 'STUDENT-STUDENT') return false;
-  if (pair === 'STUDENT-TEACHER') {
-    const student = sender.role === 'STUDENT' ? sender : target;
-    const teacher = sender.role === 'TEACHER' ? sender : target;
-    return await studentCanMessageTeacher(student, teacher);
-  }
-  if (pair === 'COORDINATOR-STUDENT') return sameClassGroup(sender, target);
-  if (pair === 'TEACHER-TEACHER') return true;
-  if (pair === 'COORDINATOR-TEACHER') return true;
-  if (pair === 'COORDINATOR-COORDINATOR') return true;
-
-  return false;
+  return true;
 }
 
 async function canAccessChat(userId, chatId) {
@@ -385,6 +371,52 @@ async function markChatRead(user, chatId) {
   }
 }
 
+async function deleteChat(user, chatId) {
+  const actor = await resolveActor(user);
+  if (!actor) {
+    return { status: 403, body: { message: "Unable to resolve user context." } };
+  }
+
+  const chat = await getChatById(chatId);
+  if (!chat) {
+    return { status: 404, body: { message: "Chat not found." } };
+  }
+
+  const roles = Array.isArray(user.roles) ? user.roles : [user.role].filter(Boolean);
+  const isAdmin = roles.includes("ADMIN") || actor.role === "ADMIN";
+  
+  const hasAccess = isAdmin || (await canAccessChat(actor.id, chat.id));
+  
+  if (!hasAccess) {
+    return { status: 403, body: { message: "You don't have permission to delete this chat." } };
+  }
+
+  try {
+    await pool.query('BEGIN');
+    await pool.query('DELETE FROM message_reads WHERE chat_id::text = $1', [String(chat.id)]);
+    await pool.query('DELETE FROM messages WHERE chat_id::text = $1', [String(chat.id)]);
+    await pool.query('DELETE FROM chat_members WHERE chat_id::text = $1', [String(chat.id)]);
+    await pool.query('DELETE FROM chats WHERE id::text = $1', [String(chat.id)]);
+    await pool.query('COMMIT');
+
+    try {
+      const socketUtils = require('../socket');
+      const io = socketUtils.getIo();
+      if (io) {
+        io.to(chat.id).emit('chat.deleted', { chatId: chat.id });
+      }
+    } catch (e) {
+      console.warn('[group] emit chat.deleted failed', e.message);
+    }
+
+    return { status: 200, body: { message: "Chat deleted successfully." } };
+  } catch (err) {
+    await pool.query('ROLLBACK');
+    console.error('[group] deleteChat failed', err);
+    return { status: 500, body: { message: "Failed to delete chat." } };
+  }
+}
+
 module.exports = {
   getUserById,
   canAccessChat,
@@ -395,5 +427,6 @@ module.exports = {
   createOrGetDirectChat,
   getChatById,
   canDirectMessage,
-  markChatRead
+  markChatRead,
+  deleteChat
 };

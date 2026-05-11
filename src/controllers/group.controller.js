@@ -68,9 +68,24 @@ async function markChatRead(req, res) {
   }
 }
 
+async function deleteChat(req, res) {
+  if (!ensureAuthenticated(req, res)) {
+    return;
+  }
+
+  try {
+    const result = await groupService.deleteChat(req.user, req.params.chatId);
+    return res.status(result.status).json(result.body);
+  } catch (err) {
+    console.error('[controller] deleteChat failed', err);
+    return res.status(500).json({ message: 'Failed to delete chat.' });
+  }
+}
+
 module.exports = {
   getMessagingContacts,
   getGroups,
   createDirectGroup,
-  markChatRead
+  markChatRead,
+  deleteChat
 };

@@ -204,19 +204,27 @@ async function listChatMessages(user, chatId, options = {}) {
     const rawBefore = typeof options.before === "string" ? options.before.trim() : "";
     const beforeDate = rawBefore ? new Date(rawBefore) : null;
     const before = beforeDate && !Number.isNaN(beforeDate.getTime()) ? beforeDate.toISOString() : null;
+    const q = typeof options.q === "string" ? options.q.trim() : "";
 
-    const res = await pool.query(
-      `SELECT m.id, m.chat_id, m.sender_user_id, m.body, m.created_at, m.updated_at, m.is_deleted,
+    let queryStr = `SELECT m.id, m.chat_id, m.sender_user_id, m.body, m.created_at, m.updated_at, m.is_deleted,
               u.first_name, u.last_name,
               (SELECT r.code FROM user_roles ur JOIN roles r ON r.id = ur.role_id WHERE ur.user_id = u.id LIMIT 1) AS role
        FROM messages m
        JOIN users u ON u.id = m.sender_user_id
        WHERE m.chat_id = $1::uuid
-         AND ($2::timestamptz IS NULL OR m.created_at < $2::timestamptz)
-       ORDER BY m.created_at DESC, m.id DESC
-       LIMIT $3`,
-      [chat.id, before, pageLimit + 1]
-    );
+         AND ($2::timestamptz IS NULL OR m.created_at < $2::timestamptz)`;
+    
+    const params = [chat.id, before];
+
+    if (q) {
+      params.push(`%${q}%`);
+      queryStr += ` AND m.body ILIKE $${params.length}`;
+    }
+
+    queryStr += ` ORDER BY m.created_at DESC, m.id DESC LIMIT $${params.length + 1}`;
+    params.push(pageLimit + 1);
+
+    const res = await pool.query(queryStr, params);
 
     const allRows = res.rows || [];
     const hasOlder = allRows.length > pageLimit;
@@ -356,6 +364,57 @@ async function createChatMessageWithAttachments(user, chatId, body, attachments 
       console.warn("[messages] socket emit failed", e.message);
     }
 
+    // Send notification to chat members who aren't in the room (they'll get real-time notif)
+    try {
+      const io = socketUtils.getIo();
+      if (io) {
+        const membersRes = await pool.query(
+          "SELECT user_id FROM chat_members WHERE chat_id = $1",
+          [chat.id]
+        );
+        const memberIds = (membersRes.rows || []).map(r => r.user_id);
+        
+        // Get sender name for notification
+        const senderName = sender?.name || "Someone";
+        const isGroupChat = chat.chat_type !== "DIRECT";
+        
+        let chatName = chat.name || "Chat";
+        // For direct chats, get the other participant's name
+        if (!isGroupChat) {
+          const otherMemberId = memberIds.find(id => String(id) !== String(actor.id));
+          if (otherMemberId) {
+            const userRes = await pool.query(
+              "SELECT first_name, last_name FROM users WHERE id = $1",
+              [otherMemberId]
+            );
+            if (userRes.rows?.[0]) {
+              chatName = `${userRes.rows[0].first_name || ""} ${userRes.rows[0].last_name || ""}`.trim() || "Chat";
+            }
+          }
+        }
+        
+        const notifTitle = isGroupChat 
+          ? `${senderName} in ${chatName}` 
+          : chatName;
+        const notifBody = cleanBody || (createdAttachments.length ? `Sent ${createdAttachments.length} file(s)` : "Sent a message");
+        
+        for (const memberId of memberIds) {
+          if (String(memberId) === String(actor.id)) continue; // Skip sender
+          // Emit to user's personal room (they join with their userId)
+          io.to(String(memberId)).emit("notification", {
+            id: `msg-${newMessage.id}`,
+            type: "message",
+            title: notifTitle,
+            subtitle: notifBody,
+            timestamp: createdAt,
+            link: "/chat"
+          });
+        }
+      }
+    } catch (e) {
+      console.warn("[messages] notification emit failed", e.message);
+    }
+
     return { status: 201, body: newMessage };
   } catch (err) {
     console.error("[messages] createChatMessage failed", err);
@@ -483,10 +542,60 @@ async function deleteChatMessage(user, chatId, messageId) {
   }
 }
 
+async function getAttachment(user, chatId, attachmentId) {
+  const actor = await resolveActor(user);
+  if (!actor) {
+    return { status: 403, body: { message: "Unable to resolve user context." } };
+  }
+
+  if (!isValidUuid(chatId) || !isValidUuid(attachmentId)) {
+    return { status: 400, body: { message: "Invalid ID." } };
+  }
+
+  const chat = await getChatById(chatId);
+  if (!chat) {
+    return { status: 404, body: { message: "Chat not found." } };
+  }
+
+  if (!(await canAccessChat(actor.id, chat.id))) {
+    return { status: 403, body: { message: "You are not a member of this chat." } };
+  }
+
+  try {
+    const res = await pool.query(
+      `SELECT ma.id, ma.file_name, ma.mime_type, ma.file_data
+       FROM message_attachments ma
+       JOIN messages m ON m.id = ma.message_id
+       WHERE ma.id = $1::uuid AND m.chat_id = $2::uuid`,
+      [attachmentId, chat.id]
+    );
+
+    if (!res.rows || !res.rows[0]) {
+      return { status: 404, body: { message: "Attachment not found." } };
+    }
+
+    const row = res.rows[0];
+    return {
+      status: 200,
+      body: {
+        attachment: {
+          fileName: row.file_name,
+          mimeType: row.mime_type,
+          fileData: row.file_data
+        }
+      }
+    };
+  } catch (err) {
+    console.error("[messages] getAttachment failed", err);
+    return { status: 500, body: { message: "Failed to get attachment." } };
+  }
+}
+
 module.exports = {
   listChatMessages,
   createChatMessage,
   createChatMessageWithAttachments,
   updateChatMessage,
-  deleteChatMessage
+  deleteChatMessage,
+  getAttachment
 };

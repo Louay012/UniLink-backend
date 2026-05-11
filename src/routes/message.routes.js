@@ -25,5 +25,6 @@ router.post("/chats/:chatId/messages/upload", (req, res) => {
 });
 router.patch("/chats/:chatId/messages/:messageId", messageController.putMessage);
 router.delete("/chats/:chatId/messages/:messageId", messageController.deleteMessage);
+router.get("/chats/:chatId/attachments/:attachmentId/download", messageController.downloadAttachment);
 
 module.exports = router;

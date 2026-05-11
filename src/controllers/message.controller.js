@@ -34,10 +34,12 @@ async function getMessages(req, res) {
     const rawLimit = Number.parseInt(String(req.query.limit || ""), 10);
     const limit = Number.isFinite(rawLimit) ? rawLimit : undefined;
     const before = typeof req.query.before === "string" ? req.query.before : undefined;
+    const q = typeof req.query.q === "string" ? req.query.q : (typeof req.query.search === "string" ? req.query.search : undefined);
 
     const result = await messageService.listChatMessages(req.user, req.params.chatId, {
       limit,
-      before
+      before,
+      q
     });
     return res.status(result.status).json(result.body);
   } catch (err) {
@@ -123,10 +125,32 @@ async function postMessageWithFiles(req, res) {
   }
 }
 
+async function downloadAttachment(req, res) {
+  if (!ensureAuthenticated(req, res)) {
+    return;
+  }
+
+  try {
+    const result = await messageService.getAttachment(req.user, req.params.chatId, req.params.attachmentId);
+    if (result.status !== 200) {
+      return res.status(result.status).json(result.body);
+    }
+
+    const { attachment } = result.body;
+    res.setHeader("Content-Type", attachment.mimeType || "application/octet-stream");
+    res.setHeader("Content-Disposition", `inline; filename="${encodeURIComponent(attachment.fileName)}"`);
+    return res.send(attachment.fileData);
+  } catch (err) {
+    console.error('[controller] downloadAttachment failed', err);
+    return res.status(500).json({ message: 'Failed to download attachment.' });
+  }
+}
+
 module.exports = {
   getMessages,
   postMessage,
   putMessage,
   deleteMessage,
-  postMessageWithFiles
+  postMessageWithFiles,
+  downloadAttachment
 };
