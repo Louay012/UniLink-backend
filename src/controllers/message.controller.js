@@ -54,7 +54,8 @@ async function postMessage(req, res) {
   }
 
   try {
-    const result = await messageService.createChatMessage(req.user, req.params.chatId, req.body.body);
+    const payload = typeof req.body === 'object' && req.body ? req.body : {};
+    const result = await messageService.createChatMessage(req.user, req.params.chatId, payload);
     return res.status(result.status).json(result.body);
   } catch (err) {
     console.error('[controller] postMessage failed', err);
@@ -103,6 +104,8 @@ async function postMessageWithFiles(req, res) {
 
   try {
     const body = typeof req.body.body === 'string' ? req.body.body : '';
+    const replyToMessageId = typeof req.body.replyToMessageId === 'string' ? req.body.replyToMessageId : null;
+    const forwardedFromMessageId = typeof req.body.forwardedFromMessageId === 'string' ? req.body.forwardedFromMessageId : null;
     const files = Array.isArray(req.files) ? req.files : [];
 
     const attachments = files.map((file) => ({
@@ -115,7 +118,11 @@ async function postMessageWithFiles(req, res) {
     const result = await messageService.createChatMessageWithAttachments(
       req.user,
       req.params.chatId,
-      body,
+      {
+        body,
+        replyToMessageId,
+        forwardedFromMessageId
+      },
       attachments
     );
     return res.status(result.status).json(result.body);

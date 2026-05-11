@@ -27,6 +27,16 @@ async function ensureMessagingTables() {
          )`
       );
 
+      await pool.query(
+        `ALTER TABLE messages
+         ADD COLUMN IF NOT EXISTS reply_to_message_id UUID REFERENCES messages(id) ON DELETE SET NULL`
+      );
+
+      await pool.query(
+        `ALTER TABLE messages
+         ADD COLUMN IF NOT EXISTS forwarded_from_message_id UUID REFERENCES messages(id) ON DELETE SET NULL`
+      );
+
       const hasLegacyUrlColumn = await pool.query(
         `SELECT EXISTS (
            SELECT 1
@@ -73,6 +83,57 @@ function mapAttachmentRow(row) {
   };
 }
 
+function mapMessagePreview(row) {
+  if (!row) {
+    return null;
+  }
+
+  const senderName = `${row.first_name || ""} ${row.last_name || ""}`.trim();
+
+  return {
+    id: row.id,
+    chatId: row.chat_id,
+    senderUserId: row.sender_user_id,
+    body: row.is_deleted ? "" : row.body,
+    isDeleted: Boolean(row.is_deleted),
+    createdAt: row.created_at ? new Date(row.created_at).toISOString() : null,
+    sender: {
+      id: row.sender_user_id,
+      name: senderName || "Unknown",
+      role: row.role || null
+    }
+  };
+}
+
+async function hydrateMessagePreviews(messageIds) {
+  const uniqueIds = [...new Set((messageIds || []).filter(Boolean).map((value) => String(value)))].filter(Boolean);
+  if (!uniqueIds.length) {
+    return new Map();
+  }
+
+  try {
+    const res = await pool.query(
+      `SELECT m.id, m.chat_id, m.sender_user_id, m.body, m.created_at, m.is_deleted,
+              u.first_name, u.last_name,
+              (SELECT r.code FROM user_roles ur JOIN roles r ON r.id = ur.role_id WHERE ur.user_id = u.id LIMIT 1) AS role
+       FROM messages m
+       JOIN users u ON u.id = m.sender_user_id
+       WHERE m.id = ANY($1::uuid[])`,
+      [uniqueIds]
+    );
+
+    const byId = new Map();
+    for (const row of res.rows || []) {
+      byId.set(String(row.id), mapMessagePreview(row));
+    }
+
+    return byId;
+  } catch (error) {
+    console.error("[messages] hydrateMessagePreviews failed", error.message);
+    return new Map();
+  }
+}
+
 async function hydrateMessageAttachments(messageIds) {
   if (!Array.isArray(messageIds) || !messageIds.length) {
     return new Map();
@@ -104,9 +165,12 @@ async function hydrateMessageAttachments(messageIds) {
   }
 }
 
-async function buildMessagePayload(messageRow, actorId) {
-  const attachmentMap = await hydrateMessageAttachments([messageRow.id]);
+async function buildMessagePayload(messageRow, actorId, options = {}) {
+  const attachmentMap = options.attachmentMap || (await hydrateMessageAttachments([messageRow.id]));
+  const relatedMap = options.relatedMap || new Map();
   const attachments = attachmentMap.get(String(messageRow.id)) || [];
+  const replyToMessageId = messageRow.reply_to_message_id || null;
+  const forwardedFromMessageId = messageRow.forwarded_from_message_id || null;
 
   return {
     id: messageRow.id,
@@ -124,10 +188,14 @@ async function buildMessagePayload(messageRow, actorId) {
     isRead: actorId ? Boolean(messageRow.read_at) : false,
     sender: {
       id: messageRow.sender_user_id,
-      name: messageRow.sender_name || "Unknown",
-      role: messageRow.sender_role || null
+      name: messageRow.sender_name || `${messageRow.first_name || ""} ${messageRow.last_name || ""}`.trim() || "Unknown",
+      role: messageRow.sender_role || messageRow.role || null
     },
-    attachments
+    attachments,
+    replyToMessageId,
+    forwardedFromMessageId,
+    replyToMessage: replyToMessageId ? relatedMap.get(String(replyToMessageId)) || null : null,
+    forwardedFromMessage: forwardedFromMessageId ? relatedMap.get(String(forwardedFromMessageId)) || null : null
   };
 }
 
@@ -178,6 +246,90 @@ function sanitizeMessagePageLimit(limit) {
   return Math.min(100, Math.max(10, parsed));
 }
 
+function normalizeMessageInput(bodyOrPayload, fallbackAttachments = []) {
+  if (bodyOrPayload && typeof bodyOrPayload === "object" && !Array.isArray(bodyOrPayload)) {
+    return {
+      body: typeof bodyOrPayload.body === "string" ? bodyOrPayload.body : "",
+      replyToMessageId: typeof bodyOrPayload.replyToMessageId === "string" ? bodyOrPayload.replyToMessageId : null,
+      forwardedFromMessageId: typeof bodyOrPayload.forwardedFromMessageId === "string" ? bodyOrPayload.forwardedFromMessageId : null,
+      attachments: Array.isArray(bodyOrPayload.attachments) ? bodyOrPayload.attachments : fallbackAttachments
+    };
+  }
+
+  return {
+    body: typeof bodyOrPayload === "string" ? bodyOrPayload : String(bodyOrPayload || ""),
+    replyToMessageId: null,
+    forwardedFromMessageId: null,
+    attachments: fallbackAttachments
+  };
+}
+
+async function fetchMessagesAroundAnchor(chatId, anchorMessageId, pageLimit) {
+  const halfLimit = Math.max(5, Math.floor(pageLimit / 2));
+  const anchorRes = await pool.query(
+    `SELECT m.id, m.chat_id, m.sender_user_id, m.body, m.created_at, m.updated_at, m.is_deleted,
+            m.reply_to_message_id, m.forwarded_from_message_id,
+            u.first_name, u.last_name,
+            (SELECT r.code FROM user_roles ur JOIN roles r ON r.id = ur.role_id WHERE ur.user_id = u.id LIMIT 1) AS role
+     FROM messages m
+     JOIN users u ON u.id = m.sender_user_id
+     WHERE m.id = $1::uuid AND m.chat_id = $2::uuid
+     LIMIT 1`,
+    [anchorMessageId, chatId]
+  );
+
+  if (!anchorRes.rows?.length) {
+    return null;
+  }
+
+  const anchorRow = anchorRes.rows[0];
+  const anchorDate = anchorRow.created_at ? new Date(anchorRow.created_at).toISOString() : null;
+
+  const olderRes = await pool.query(
+    `SELECT m.id, m.chat_id, m.sender_user_id, m.body, m.created_at, m.updated_at, m.is_deleted,
+            m.reply_to_message_id, m.forwarded_from_message_id,
+            u.first_name, u.last_name,
+            (SELECT r.code FROM user_roles ur JOIN roles r ON r.id = ur.role_id WHERE ur.user_id = u.id LIMIT 1) AS role
+     FROM messages m
+     JOIN users u ON u.id = m.sender_user_id
+     WHERE m.chat_id = $1::uuid
+       AND m.created_at < $2::timestamptz
+     ORDER BY m.created_at DESC, m.id DESC
+     LIMIT $3`,
+    [chatId, anchorDate, halfLimit + 1]
+  );
+
+  const newerRes = await pool.query(
+    `SELECT m.id, m.chat_id, m.sender_user_id, m.body, m.created_at, m.updated_at, m.is_deleted,
+            m.reply_to_message_id, m.forwarded_from_message_id,
+            u.first_name, u.last_name,
+            (SELECT r.code FROM user_roles ur JOIN roles r ON r.id = ur.role_id WHERE ur.user_id = u.id LIMIT 1) AS role
+     FROM messages m
+     JOIN users u ON u.id = m.sender_user_id
+     WHERE m.chat_id = $1::uuid
+       AND m.created_at > $2::timestamptz
+     ORDER BY m.created_at ASC, m.id ASC
+     LIMIT $3`,
+    [chatId, anchorDate, halfLimit + 1]
+  );
+
+  const olderRows = olderRes.rows || [];
+  const newerRows = newerRes.rows || [];
+  const hasOlder = olderRows.length > halfLimit;
+  const hasNewer = newerRows.length > halfLimit;
+  const trimmedOlder = hasOlder ? olderRows.slice(0, halfLimit) : olderRows;
+  const trimmedNewer = hasNewer ? newerRows.slice(0, halfLimit) : newerRows;
+  const rows = [...trimmedOlder.reverse(), anchorRow, ...trimmedNewer];
+
+  return {
+    rows,
+    hasOlder,
+    hasNewer,
+    oldestCreatedAt: rows.length ? new Date(rows[0].created_at).toISOString() : null,
+    newestCreatedAt: rows.length ? new Date(rows[rows.length - 1].created_at).toISOString() : null
+  };
+}
+
 async function listChatMessages(user, chatId, options = {}) {
   await ensureMessagingTables();
 
@@ -205,8 +357,45 @@ async function listChatMessages(user, chatId, options = {}) {
     const beforeDate = rawBefore ? new Date(rawBefore) : null;
     const before = beforeDate && !Number.isNaN(beforeDate.getTime()) ? beforeDate.toISOString() : null;
     const q = typeof options.q === "string" ? options.q.trim() : "";
+    const anchor = typeof options.anchor === "string" ? options.anchor.trim() : "";
+
+    if (anchor) {
+      const anchoredPage = await fetchMessagesAroundAnchor(chat.id, anchor, pageLimit);
+      if (!anchoredPage) {
+        return { status: 404, body: { message: "Message not found." } };
+      }
+
+      const attachmentMap = await hydrateMessageAttachments(anchoredPage.rows.map((row) => row.id));
+      const relatedIds = anchoredPage.rows.flatMap((row) => [row.reply_to_message_id, row.forwarded_from_message_id]).filter(Boolean);
+      const relatedMap = await hydrateMessagePreviews(relatedIds);
+
+      const items = [];
+      for (const row of anchoredPage.rows) {
+        items.push(await buildMessagePayload(row, actor.id, { attachmentMap, relatedMap }));
+      }
+
+      return {
+        status: 200,
+        body: {
+          actorUserId: actor.id,
+          chat: await formatChatForUser(chat, actor.id),
+          items,
+          paging: {
+            limit: pageLimit,
+            hasOlder: anchoredPage.hasOlder,
+            hasNewer: anchoredPage.hasNewer,
+            oldestCreatedAt: anchoredPage.oldestCreatedAt,
+            newestCreatedAt: anchoredPage.newestCreatedAt,
+            nextBefore: anchoredPage.oldestCreatedAt,
+            nextAfter: anchoredPage.newestCreatedAt,
+            anchor
+          }
+        }
+      };
+    }
 
     let queryStr = `SELECT m.id, m.chat_id, m.sender_user_id, m.body, m.created_at, m.updated_at, m.is_deleted,
+              m.reply_to_message_id, m.forwarded_from_message_id,
               u.first_name, u.last_name,
               (SELECT r.code FROM user_roles ur JOIN roles r ON r.id = ur.role_id WHERE ur.user_id = u.id LIMIT 1) AS role
        FROM messages m
@@ -233,24 +422,13 @@ async function listChatMessages(user, chatId, options = {}) {
     // Hydrate attachments for all messages on this page
     const messageIds = pageRows.map((r) => r.id);
     const attachmentMap = await hydrateMessageAttachments(messageIds);
+    const relatedIds = pageRows.flatMap((row) => [row.reply_to_message_id, row.forwarded_from_message_id]).filter(Boolean);
+    const relatedMap = await hydrateMessagePreviews(relatedIds);
 
-    const items = pageRows.map((r) => {
-      const senderName = `${r.first_name || ''} ${r.last_name || ''}`.trim();
-      return {
-        id: r.id,
-        chatId: r.chat_id,
-        senderUserId: r.sender_user_id,
-        body: r.is_deleted ? '' : r.body,
-        isDeleted: r.is_deleted || false,
-        createdAt: r.created_at ? new Date(r.created_at).toISOString() : new Date().toISOString(),
-        sender: {
-          id: r.sender_user_id,
-          name: senderName || 'Unknown',
-          role: r.role || null
-        },
-        attachments: attachmentMap.get(String(r.id)) || []
-      };
-    });
+    const items = [];
+    for (const row of pageRows) {
+      items.push(await buildMessagePayload(row, actor.id, { attachmentMap, relatedMap }));
+    }
 
     const oldestCreatedAt = items.length
       ? items[items.length - 1].createdAt
@@ -280,7 +458,7 @@ async function createChatMessage(user, chatId, body) {
   return createChatMessageWithAttachments(user, chatId, body, []);
 }
 
-async function createChatMessageWithAttachments(user, chatId, body, attachments = []) {
+async function createChatMessageWithAttachments(user, chatId, bodyOrPayload, attachments = []) {
   await ensureMessagingTables();
 
   if (!isValidUuid(chatId)) {
@@ -297,10 +475,13 @@ async function createChatMessageWithAttachments(user, chatId, body, attachments 
     return { status: 404, body: { message: "Chat not found." } };
   }
 
-  const cleanBody = (body || "").trim();
-  const cleanAttachments = (attachments || []).filter((item) => item && item.content && item.fileName);
+  const normalized = normalizeMessageInput(bodyOrPayload, attachments);
+  const cleanBody = (normalized.body || "").trim();
+  const cleanAttachments = (normalized.attachments || []).filter((item) => item && item.content && item.fileName);
+  const replyToMessageId = isValidUuid(normalized.replyToMessageId) ? normalized.replyToMessageId : null;
+  const forwardedFromMessageId = isValidUuid(normalized.forwardedFromMessageId) ? normalized.forwardedFromMessageId : null;
 
-  if (!cleanBody && !cleanAttachments.length) {
+  if (!cleanBody && !cleanAttachments.length && !replyToMessageId && !forwardedFromMessageId) {
     return { status: 400, body: { message: "Message body or attachment is required." } };
   }
 
@@ -309,11 +490,31 @@ async function createChatMessageWithAttachments(user, chatId, body, attachments 
       return { status: 403, body: { message: "You are not a member of this chat." } };
     }
 
+    if (replyToMessageId) {
+      const replyRes = await pool.query(
+        "SELECT 1 FROM messages WHERE id::text = $1 AND chat_id::text = $2 LIMIT 1",
+        [replyToMessageId, chat.id]
+      );
+      if (!replyRes.rows?.length) {
+        return { status: 404, body: { message: "Reply target message not found." } };
+      }
+    }
+
+    if (forwardedFromMessageId) {
+      const forwardRes = await pool.query(
+        "SELECT 1 FROM messages WHERE id::text = $1 LIMIT 1",
+        [forwardedFromMessageId]
+      );
+      if (!forwardRes.rows?.length) {
+        return { status: 404, body: { message: "Forward source message not found." } };
+      }
+    }
+
     const insert = await pool.query(
-      `INSERT INTO messages (chat_id, sender_user_id, body)
-       VALUES ($1::uuid, $2::uuid, $3)
-       RETURNING id, created_at`,
-      [chat.id, actor.id, cleanBody || "(Attachment)"]
+      `INSERT INTO messages (chat_id, sender_user_id, body, reply_to_message_id, forwarded_from_message_id)
+       VALUES ($1::uuid, $2::uuid, $3, $4::uuid, $5::uuid)
+       RETURNING id, created_at, reply_to_message_id, forwarded_from_message_id`,
+      [chat.id, actor.id, cleanBody || "(Attachment)", replyToMessageId, forwardedFromMessageId]
     );
 
     const createdAt = insert.rows[0]?.created_at
@@ -341,20 +542,29 @@ async function createChatMessageWithAttachments(user, chatId, body, attachments 
     }
 
     const createdAttachments = await createAttachmentRows(insert.rows[0]?.id, chat.id, cleanAttachments);
+    const attachmentMap = new Map([[String(insert.rows[0]?.id), createdAttachments]]);
+    const relatedMap = await hydrateMessagePreviews([replyToMessageId, forwardedFromMessageId]);
 
-    const newMessage = {
-      id: insert.rows[0]?.id,
-      chatId: chat.id,
-      senderUserId: actor.id,
-      body: cleanBody,
-      isDeleted: false,
-      isEdited: false,
-      isRead: true,
-      createdAt,
-      updatedAt: createdAt,
-      sender,
-      attachments: createdAttachments
-    };
+    const newMessage = await buildMessagePayload(
+      {
+        id: insert.rows[0]?.id,
+        chat_id: chat.id,
+        sender_user_id: actor.id,
+        body: cleanBody,
+        is_deleted: false,
+        created_at: createdAt,
+        updated_at: createdAt,
+        reply_to_message_id: insert.rows[0]?.reply_to_message_id || replyToMessageId,
+        forwarded_from_message_id: insert.rows[0]?.forwarded_from_message_id || forwardedFromMessageId,
+        sender_name: sender?.name || "Unknown",
+        sender_role: sender?.role || null
+      },
+      actor.id,
+      { attachmentMap, relatedMap }
+    );
+
+    newMessage.isRead = true;
+    newMessage.updatedAt = createdAt;
 
     // broadcast to room
     try {
