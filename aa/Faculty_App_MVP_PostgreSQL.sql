@@ -268,10 +268,19 @@ CREATE TABLE IF NOT EXISTS message_attachments (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     message_id UUID NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
     file_name VARCHAR(255) NOT NULL,
-    file_url TEXT NOT NULL,
     mime_type VARCHAR(120),
     file_size BIGINT,
+    file_data BYTEA NOT NULL,
+    uploaded_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     CHECK (file_size IS NULL OR file_size >= 0)
+);
+
+CREATE TABLE IF NOT EXISTS message_reads (
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    chat_id UUID NOT NULL REFERENCES chats(id) ON DELETE CASCADE,
+    last_read_message_id UUID REFERENCES messages(id) ON DELETE SET NULL,
+    read_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (user_id, chat_id)
 );
 
 -- ----------------------------------------------------------------------------
@@ -347,3 +356,5 @@ COMMIT;
 -- =============================================================================
 ALTER TABLE users 
 ADD COLUMN IF NOT EXISTS password_hash VARCHAR(255);
+
+CREATE INDEX IF NOT EXISTS idx_message_reads_user_chat ON message_reads(user_id, chat_id);

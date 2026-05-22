@@ -7,5 +7,6 @@ router.get("/health",         authController.health);
 router.post("/auth/register", authController.register);
 router.post("/auth/login",    authController.login);
 router.get("/auth/me",        authController.me);
+router.get("/users/search",   authController.searchUsers);
 
 module.exports = router;

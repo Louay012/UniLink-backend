@@ -202,7 +202,13 @@ Policy mapping:
 - mime_type
 - file_size
 
-20. message_reports
+20. message_reads
+- message_id (FK -> messages.id)
+- user_id (FK -> users.id)
+- read_at
+- PRIMARY KEY (message_id, user_id)
+
+21. message_reports
 - id (PK)
 - message_id (FK -> messages.id)
 - reported_by_user_id (FK -> users.id)
@@ -215,7 +221,7 @@ Policy mapping:
 
 E. Governance and Security
 
-21. policy_overrides
+22. policy_overrides
 - id (PK)
 - key_name  -- e.g. ENABLE_STUDENT_STUDENT_DM
 - value_bool
@@ -224,7 +230,7 @@ E. Governance and Security
 - expires_at (nullable)
 - created_at
 
-22. moderation_actions
+23. moderation_actions
 - id (PK)
 - chat_id (FK -> chats.id, nullable)
 - message_id (FK -> messages.id, nullable)
@@ -234,7 +240,7 @@ E. Governance and Security
 - reason
 - created_at
 
-23. audit_logs
+24. audit_logs
 - id (PK)
 - actor_user_id (FK -> users.id)
 - action
@@ -246,14 +252,14 @@ E. Governance and Security
 
 F. Retention and Archive
 
-24. retention_jobs
+25. retention_jobs
 - id (PK)
 - job_type (ENUM: MESSAGE_ARCHIVE, MESSAGE_PURGE, ANNOUNCEMENT_ARCHIVE, ANNOUNCEMENT_PURGE)
 - status (ENUM: QUEUED, RUNNING, DONE, FAILED)
 - executed_at
 - details
 
-25. archived_messages (optional physical archive table)
+26. archived_messages (optional physical archive table)
 - id (PK)
 - original_message_id
 - chat_id
@@ -261,7 +267,7 @@ F. Retention and Archive
 - body
 - archived_at
 
-26. archived_announcements (optional physical archive table)
+27. archived_announcements (optional physical archive table)
 - id (PK)
 - original_announcement_id
 - scope

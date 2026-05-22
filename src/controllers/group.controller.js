@@ -54,8 +54,38 @@ async function createDirectGroup(req, res) {
   }
 }
 
+async function markChatRead(req, res) {
+  if (!ensureAuthenticated(req, res)) {
+    return;
+  }
+
+  try {
+    const result = await groupService.markChatRead(req.user, req.params.chatId);
+    return res.status(result.status).json(result.body);
+  } catch (err) {
+    console.error('[controller] markChatRead failed', err);
+    return res.status(500).json({ message: 'Failed to mark chat as read.' });
+  }
+}
+
+async function deleteChat(req, res) {
+  if (!ensureAuthenticated(req, res)) {
+    return;
+  }
+
+  try {
+    const result = await groupService.deleteChat(req.user, req.params.chatId);
+    return res.status(result.status).json(result.body);
+  } catch (err) {
+    console.error('[controller] deleteChat failed', err);
+    return res.status(500).json({ message: 'Failed to delete chat.' });
+  }
+}
+
 module.exports = {
   getMessagingContacts,
   getGroups,
-  createDirectGroup
+  createDirectGroup,
+  markChatRead,
+  deleteChat
 };

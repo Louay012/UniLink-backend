@@ -30,4 +30,15 @@ function me(req, res) {
   res.json({ user: req.user });
 }
 
-module.exports = { register, login, health, me };
+// GET /users/search
+async function searchUsers(req, res) {
+  try {
+    const q = req.query.q;
+    const users = await authService.searchUsers(q);
+    res.json(users);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+}
+
+module.exports = { register, login, health, me, searchUsers };

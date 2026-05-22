@@ -90,21 +90,7 @@ async function studentCanMessageTeacher(student, teacher) {
 
 async function canDirectMessage(sender, target) {
   if (!sender || !target || sender.id === target.id) return false;
-
-  const pair = [sender.role || '', target.role || ''].sort().join('-');
-
-  if (pair === 'STUDENT-STUDENT') return false;
-  if (pair === 'STUDENT-TEACHER') {
-    const student = sender.role === 'STUDENT' ? sender : target;
-    const teacher = sender.role === 'TEACHER' ? sender : target;
-    return await studentCanMessageTeacher(student, teacher);
-  }
-  if (pair === 'COORDINATOR-STUDENT') return sameClassGroup(sender, target);
-  if (pair === 'TEACHER-TEACHER') return true;
-  if (pair === 'COORDINATOR-TEACHER') return true;
-  if (pair === 'COORDINATOR-COORDINATOR') return true;
-
-  return false;
+  return true;
 }
 
 async function canAccessChat(userId, chatId) {
@@ -158,11 +144,27 @@ async function formatChatForUser(chat, userId) {
       persistedCount = 0;
     }
 
+    let unreadCount = 0;
+    try {
+      const unreadRes = await pool.query(
+        `SELECT COUNT(*)::int AS cnt FROM messages m
+         WHERE m.chat_id::text = $1 AND m.sender_user_id::text != $2 AND m.created_at > COALESCE(
+           (SELECT mr.read_at FROM message_reads mr WHERE mr.user_id::text = $2 AND mr.chat_id::text = $1),
+           '1970-01-01'::timestamp
+         )`,
+        [String(chat.id), String(userId)]
+      );
+      unreadCount = Number(unreadRes.rows[0]?.cnt || 0);
+    } catch (e) {
+      unreadCount = 0;
+    }
+
     return {
       ...chat,
       title,
       members,
       messageCount: persistedCount,
+      unreadCount,
       lastMessage: lastMessage ? { id: lastMessage.id, senderUserId: lastMessage.senderUserId, body: lastMessage.body, createdAt: lastMessage.createdAt } : null
     };
   } catch (e) {
@@ -278,30 +280,30 @@ async function createOrGetDirectChat(user, targetUserId, initialMessage) {
     }
 
     if (initialMessage) {
+      try {
+        const ins = await pool.query(`INSERT INTO messages (chat_id, sender_user_id, body) VALUES ($1::uuid, $2::uuid, $3) RETURNING id, created_at`, [chatRow.id, actor.id, initialMessage]);
+        const createdAt = ins.rows[0]?.created_at ? new Date(ins.rows[0].created_at).toISOString() : new Date().toISOString();
+        // emit socket event to the specific chat room
         try {
-          const ins = await pool.query(`INSERT INTO messages (chat_id, sender_user_id, body) VALUES ($1::uuid, $2::uuid, $3) RETURNING id, created_at`, [chatRow.id, actor.id, initialMessage]);
-          const createdAt = ins.rows[0]?.created_at ? new Date(ins.rows[0].created_at).toISOString() : new Date().toISOString();
-          // emit socket event so clients see the initial message in real-time
-          try {
-            const socketUtils = require('../socket');
-            const io = socketUtils.getIo();
-            if (io) {
-              const newMessage = {
-                id: ins.rows[0]?.id,
-                chatId: chatRow.id,
-                senderUserId: actor.id,
-                body: initialMessage,
-                createdAt,
-                sender: { id: actor.id, name: actor.name || 'Unknown', role: actor.role || null }
-              };
-              io.emit('message.created', newMessage);
-            }
-          } catch (e) {
-            console.warn('[group] emit initial message failed', e.message);
+          const socketUtils = require('../socket');
+          const io = socketUtils.getIo();
+          if (io) {
+            const newMessage = {
+              id: ins.rows[0]?.id,
+              chatId: chatRow.id,
+              senderUserId: actor.id,
+              body: initialMessage,
+              createdAt,
+              sender: { id: actor.id, name: actor.name || 'Unknown', role: actor.role || null }
+            };
+            io.to(chatRow.id).emit('message.created', newMessage);
           }
         } catch (e) {
-          console.error('[group] insert initialMessage failed', e.message);
+          console.warn('[group] emit initial message failed', e.message);
         }
+      } catch (e) {
+        console.error('[group] insert initialMessage failed', e.message);
+      }
     }
 
     return { status: wasCreated ? 201 : 200, body: { chat: await formatChatForUser(chatRow, actor.id) } };
@@ -323,6 +325,98 @@ async function getChatById(chatId) {
 
 }
 
+async function markChatRead(user, chatId) {
+  const actor = await resolveActor(user);
+  if (!actor) {
+    return { status: 403, body: { message: "Unable to resolve user context." } };
+  }
+
+  const chat = await getChatById(chatId);
+  if (!chat) {
+    return { status: 404, body: { message: "Chat not found." } };
+  }
+
+  if (!(await canAccessChat(actor.id, chat.id))) {
+    return { status: 403, body: { message: "You are not a member of this chat." } };
+  }
+
+  try {
+    const latestMsg = await pool.query(
+      "SELECT id FROM messages WHERE chat_id::text = $1 ORDER BY created_at DESC LIMIT 1",
+      [chat.id]
+    );
+
+    const lastReadMessageId = latestMsg.rows[0]?.id || null;
+
+    await pool.query(
+      `INSERT INTO message_reads (user_id, chat_id, last_read_message_id, read_at)
+       VALUES ($1, $2, $3, NOW())
+       ON CONFLICT (user_id, chat_id) 
+       DO UPDATE SET last_read_message_id = EXCLUDED.last_read_message_id, read_at = EXCLUDED.read_at`,
+      [actor.id, chat.id, lastReadMessageId]
+    );
+
+    try {
+      const socketUtils = require('../socket');
+      const io = socketUtils.getIo();
+      if (io) io.to(chat.id).emit('chat.read', { chatId: chat.id, userId: actor.id });
+    } catch (e) {
+      console.warn('[group] emit chat.read failed', e.message);
+    }
+
+    return { status: 200, body: { message: "Chat marked as read." } };
+  } catch (err) {
+    console.error('[group] markChatRead failed', err);
+    return { status: 500, body: { message: "Failed to mark chat as read." } };
+  }
+}
+
+async function deleteChat(user, chatId) {
+  const actor = await resolveActor(user);
+  if (!actor) {
+    return { status: 403, body: { message: "Unable to resolve user context." } };
+  }
+
+  const chat = await getChatById(chatId);
+  if (!chat) {
+    return { status: 404, body: { message: "Chat not found." } };
+  }
+
+  const roles = Array.isArray(user.roles) ? user.roles : [user.role].filter(Boolean);
+  const isAdmin = roles.includes("ADMIN") || actor.role === "ADMIN";
+  
+  const hasAccess = isAdmin || (await canAccessChat(actor.id, chat.id));
+  
+  if (!hasAccess) {
+    return { status: 403, body: { message: "You don't have permission to delete this chat." } };
+  }
+
+  try {
+    await pool.query('BEGIN');
+    await pool.query('DELETE FROM message_reads WHERE chat_id::text = $1', [String(chat.id)]);
+    await pool.query('DELETE FROM messages WHERE chat_id::text = $1', [String(chat.id)]);
+    await pool.query('DELETE FROM chat_members WHERE chat_id::text = $1', [String(chat.id)]);
+    await pool.query('DELETE FROM chats WHERE id::text = $1', [String(chat.id)]);
+    await pool.query('COMMIT');
+
+    try {
+      const socketUtils = require('../socket');
+      const io = socketUtils.getIo();
+      if (io) {
+        io.to(chat.id).emit('chat.deleted', { chatId: chat.id });
+      }
+    } catch (e) {
+      console.warn('[group] emit chat.deleted failed', e.message);
+    }
+
+    return { status: 200, body: { message: "Chat deleted successfully." } };
+  } catch (err) {
+    await pool.query('ROLLBACK');
+    console.error('[group] deleteChat failed', err);
+    return { status: 500, body: { message: "Failed to delete chat." } };
+  }
+}
+
 module.exports = {
   getUserById,
   canAccessChat,
@@ -332,5 +426,7 @@ module.exports = {
   listUserChats,
   createOrGetDirectChat,
   getChatById,
-  canDirectMessage
+  canDirectMessage,
+  markChatRead,
+  deleteChat
 };
