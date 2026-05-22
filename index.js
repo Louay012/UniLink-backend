@@ -54,10 +54,25 @@ io.on("connection", (socket) => {
     }
   });
 
-  socket.on("chat:join", ({ chatId }) => {
+  socket.on("chat:join", async ({ chatId }) => {
     if (chatId) {
-      socket.join(chatId);
-      console.log(`[socket] ${socket.id} joined chat ${chatId}`);
+      const userId = socket.data.userId;
+      if (!userId) {
+        console.warn(`[socket] Unauthorized room join attempt (no userId) for chat ${chatId}`);
+        return;
+      }
+      try {
+        const { canAccessChat } = require("./src/services/group.service");
+        const hasAccess = await canAccessChat(userId, chatId);
+        if (hasAccess) {
+          socket.join(chatId);
+          console.log(`[socket] ${socket.id} (user ${userId}) joined chat ${chatId}`);
+        } else {
+          console.warn(`[socket] User ${userId} unauthorized to join chat ${chatId}`);
+        }
+      } catch (err) {
+        console.error(`[socket] Error verifying access for chat ${chatId}:`, err);
+      }
     }
   });
 
