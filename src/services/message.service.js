@@ -63,6 +63,16 @@ async function ensureMessagingTables() {
            CHECK (file_size IS NULL OR file_size >= 0)
          )`
       );
+
+      await pool.query(
+        `CREATE TABLE IF NOT EXISTS message_reactions (
+           message_id UUID NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+           user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+           emoji VARCHAR(20) NOT NULL,
+           created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+           PRIMARY KEY (message_id, user_id, emoji)
+         )`
+      );
     })().catch((error) => {
       messagingTablesReadyPromise = null;
       throw error;
@@ -185,7 +195,8 @@ async function buildMessagePayload(messageRow, actorId, options = {}) {
     ),
     createdAt: messageRow.created_at ? new Date(messageRow.created_at).toISOString() : new Date().toISOString(),
     updatedAt: messageRow.updated_at ? new Date(messageRow.updated_at).toISOString() : null,
-    isRead: actorId ? Boolean(messageRow.read_at) : false,
+    isRead: Boolean(messageRow.is_read || messageRow.read_at),
+    reactions: messageRow.reactions || [],
     sender: {
       id: messageRow.sender_user_id,
       name: messageRow.sender_name || `${messageRow.first_name || ""} ${messageRow.last_name || ""}`.trim() || "Unknown",
@@ -270,7 +281,15 @@ async function fetchMessagesAroundAnchor(chatId, anchorMessageId, pageLimit) {
     `SELECT m.id, m.chat_id, m.sender_user_id, m.body, m.created_at, m.updated_at, m.is_deleted,
             m.reply_to_message_id, m.forwarded_from_message_id,
             u.first_name, u.last_name,
-            (SELECT r.code FROM user_roles ur JOIN roles r ON r.id = ur.role_id WHERE ur.user_id = u.id LIMIT 1) AS role
+            (SELECT r.code FROM user_roles ur JOIN roles r ON r.id = ur.role_id WHERE ur.user_id = u.id LIMIT 1) AS role,
+            EXISTS (
+              SELECT 1 FROM message_reads mr 
+              WHERE mr.chat_id = m.chat_id AND mr.user_id != m.sender_user_id AND mr.read_at >= m.created_at
+            ) as is_read,
+            (
+              SELECT json_agg(json_build_object('emoji', r.emoji, 'userId', r.user_id))
+              FROM message_reactions r WHERE r.message_id = m.id
+            ) as reactions
      FROM messages m
      JOIN users u ON u.id = m.sender_user_id
      WHERE m.id = $1::uuid AND m.chat_id = $2::uuid
@@ -289,7 +308,15 @@ async function fetchMessagesAroundAnchor(chatId, anchorMessageId, pageLimit) {
     `SELECT m.id, m.chat_id, m.sender_user_id, m.body, m.created_at, m.updated_at, m.is_deleted,
             m.reply_to_message_id, m.forwarded_from_message_id,
             u.first_name, u.last_name,
-            (SELECT r.code FROM user_roles ur JOIN roles r ON r.id = ur.role_id WHERE ur.user_id = u.id LIMIT 1) AS role
+            (SELECT r.code FROM user_roles ur JOIN roles r ON r.id = ur.role_id WHERE ur.user_id = u.id LIMIT 1) AS role,
+            EXISTS (
+              SELECT 1 FROM message_reads mr 
+              WHERE mr.chat_id = m.chat_id AND mr.user_id != m.sender_user_id AND mr.read_at >= m.created_at
+            ) as is_read,
+            (
+              SELECT json_agg(json_build_object('emoji', r.emoji, 'userId', r.user_id))
+              FROM message_reactions r WHERE r.message_id = m.id
+            ) as reactions
      FROM messages m
      JOIN users u ON u.id = m.sender_user_id
      WHERE m.chat_id = $1::uuid
@@ -303,7 +330,15 @@ async function fetchMessagesAroundAnchor(chatId, anchorMessageId, pageLimit) {
     `SELECT m.id, m.chat_id, m.sender_user_id, m.body, m.created_at, m.updated_at, m.is_deleted,
             m.reply_to_message_id, m.forwarded_from_message_id,
             u.first_name, u.last_name,
-            (SELECT r.code FROM user_roles ur JOIN roles r ON r.id = ur.role_id WHERE ur.user_id = u.id LIMIT 1) AS role
+            (SELECT r.code FROM user_roles ur JOIN roles r ON r.id = ur.role_id WHERE ur.user_id = u.id LIMIT 1) AS role,
+            EXISTS (
+              SELECT 1 FROM message_reads mr 
+              WHERE mr.chat_id = m.chat_id AND mr.user_id != m.sender_user_id AND mr.read_at >= m.created_at
+            ) as is_read,
+            (
+              SELECT json_agg(json_build_object('emoji', r.emoji, 'userId', r.user_id))
+              FROM message_reactions r WHERE r.message_id = m.id
+            ) as reactions
      FROM messages m
      JOIN users u ON u.id = m.sender_user_id
      WHERE m.chat_id = $1::uuid
@@ -397,7 +432,15 @@ async function listChatMessages(user, chatId, options = {}) {
     let queryStr = `SELECT m.id, m.chat_id, m.sender_user_id, m.body, m.created_at, m.updated_at, m.is_deleted,
               m.reply_to_message_id, m.forwarded_from_message_id,
               u.first_name, u.last_name,
-              (SELECT r.code FROM user_roles ur JOIN roles r ON r.id = ur.role_id WHERE ur.user_id = u.id LIMIT 1) AS role
+              (SELECT r.code FROM user_roles ur JOIN roles r ON r.id = ur.role_id WHERE ur.user_id = u.id LIMIT 1) AS role,
+              EXISTS (
+                SELECT 1 FROM message_reads mr 
+                WHERE mr.chat_id = m.chat_id AND mr.user_id != m.sender_user_id AND mr.read_at >= m.created_at
+              ) as is_read,
+              (
+                SELECT json_agg(json_build_object('emoji', r.emoji, 'userId', r.user_id))
+                FROM message_reactions r WHERE r.message_id = m.id
+              ) as reactions
        FROM messages m
        JOIN users u ON u.id = m.sender_user_id
        WHERE m.chat_id = $1::uuid

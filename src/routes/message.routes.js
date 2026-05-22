@@ -1,6 +1,7 @@
 const express = require("express");
 const multer = require("multer");
 const messageController = require("../controllers/message.controller");
+const reactionController = require("../controllers/reaction.controller");
 
 const router = express.Router();
 const upload = multer({
@@ -26,5 +27,6 @@ router.post("/chats/:chatId/messages/upload", (req, res) => {
 router.patch("/chats/:chatId/messages/:messageId", messageController.putMessage);
 router.delete("/chats/:chatId/messages/:messageId", messageController.deleteMessage);
 router.get("/chats/:chatId/attachments/:attachmentId/download", messageController.downloadAttachment);
+router.post("/chats/:chatId/messages/:messageId/reactions", reactionController.toggleReaction);
 
 module.exports = router;

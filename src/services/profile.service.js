@@ -1,4 +1,5 @@
 const pool = require("../config/db");
+const bcrypt = require("bcryptjs");
 
 async function getProfile(user) {
   if (!user || !user.id) {
@@ -127,4 +128,81 @@ async function getProfile(user) {
   }
 }
 
-module.exports = { getProfile };
+async function changePassword(user, currentPassword, newPassword) {
+  if (!user?.id) return { status: 401, body: { message: "Authentication required." } };
+  if (!currentPassword || !newPassword) {
+    return { status: 400, body: { message: "Both current and new password are required." } };
+  }
+  if (newPassword.length < 8) {
+    return { status: 400, body: { message: "New password must be at least 8 characters." } };
+  }
+
+  try {
+    const result = await pool.query(
+      "SELECT password_hash FROM users WHERE id = $1",
+      [user.id]
+    );
+    if (!result.rows.length) return { status: 404, body: { message: "User not found." } };
+
+    const match = await bcrypt.compare(currentPassword, result.rows[0].password_hash);
+    if (!match) return { status: 400, body: { message: "Current password is incorrect." } };
+
+    const hash = await bcrypt.hash(newPassword, 12);
+    await pool.query("UPDATE users SET password_hash = $2 WHERE id = $1", [user.id, hash]);
+
+    return { status: 200, body: { message: "Password updated successfully." } };
+  } catch (err) {
+    console.error("[profile.service] changePassword error:", err);
+    return { status: 500, body: { message: "Failed to update password." } };
+  }
+}
+
+async function saveProfilePhoto(user, buffer, mimeType) {
+  if (!user?.id) return { status: 401, body: { message: "Authentication required." } };
+  try {
+    await pool.query(
+      "UPDATE users SET profile_photo = $2, profile_photo_mime = $3 WHERE id = $1",
+      [user.id, buffer, mimeType]
+    );
+    return { status: 200, body: { message: "Photo updated." } };
+  } catch (err) {
+    console.error("[profile.service] saveProfilePhoto error:", err);
+    return { status: 500, body: { message: "Failed to save photo." } };
+  }
+}
+
+async function getProfilePhoto(userId) {
+  try {
+    const result = await pool.query(
+      "SELECT profile_photo, profile_photo_mime FROM users WHERE id = $1",
+      [userId]
+    );
+    if (!result.rows.length || !result.rows[0].profile_photo) {
+      return { status: 404, body: null };
+    }
+    return {
+      status: 200,
+      buffer: result.rows[0].profile_photo,
+      mimeType: result.rows[0].profile_photo_mime || "image/jpeg"
+    };
+  } catch (err) {
+    console.error("[profile.service] getProfilePhoto error:", err);
+    return { status: 500, body: null };
+  }
+}
+
+async function deleteProfilePhoto(user) {
+  if (!user?.id) return { status: 401, body: { message: "Authentication required." } };
+  try {
+    await pool.query(
+      "UPDATE users SET profile_photo = NULL, profile_photo_mime = NULL WHERE id = $1",
+      [user.id]
+    );
+    return { status: 200, body: { message: "Photo removed." } };
+  } catch (err) {
+    console.error("[profile.service] deleteProfilePhoto error:", err);
+    return { status: 500, body: { message: "Failed to remove photo." } };
+  }
+}
+
+module.exports = { getProfile, changePassword, saveProfilePhoto, getProfilePhoto, deleteProfilePhoto };
