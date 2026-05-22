@@ -1,6 +1,8 @@
 const express = require("express");
 const adminController = require("../controllers/admin.controller");
 const requireAdmin = require("../middlewares/requireAdmin.middleware");
+const upload  = require('../middlewares/upload.middleware');
+const { bulkCreateUsers } = require('../controllers/bulkUser.controller');
 
 const router = express.Router();
 
@@ -21,5 +23,7 @@ router.get("/admin/users/:id",       adminController.getUserById);
 router.post("/admin/users",          adminController.createUser);
 router.patch("/admin/users/:id/role",adminController.updateUserRole);
 router.delete("/admin/users/:id",    adminController.deleteUser);
+
+router.post('/admin/bulk', upload.single('file'), bulkCreateUsers);
 
 module.exports = router;
