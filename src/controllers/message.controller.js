@@ -153,11 +153,30 @@ async function downloadAttachment(req, res) {
   }
 }
 
+async function postFeedback(req, res) {
+  if (!ensureAuthenticated(req, res)) return;
+  
+  const { subject, details, category } = req.body;
+  if (!subject || !details) {
+    return res.status(400).json({ message: "Subject and details are required." });
+  }
+
+  try {
+    const chatService = require("../services/chat.service");
+    const result = await chatService.submitFeedback(req.user, category, subject, details);
+    return res.status(result.status).json(result.body);
+  } catch (err) {
+    console.error('[controller] postFeedback failed', err);
+    return res.status(500).json({ message: "Failed to submit feedback." });
+  }
+}
+
 module.exports = {
   getMessages,
   postMessage,
   putMessage,
   deleteMessage,
   postMessageWithFiles,
-  downloadAttachment
+  downloadAttachment,
+  postFeedback
 };

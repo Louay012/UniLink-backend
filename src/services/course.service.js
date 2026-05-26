@@ -1,8 +1,8 @@
 const pool = require("../config/db");
-const groupService = require("./group.service");
+const chatService = require("./chat.service");
 
 async function resolveActor(user) {
-  return groupService.resolveActor(user);
+  return chatService.resolveActor(user);
 }
 
 async function formatCourse(course) {
@@ -53,6 +53,20 @@ async function formatCourse(course) {
     console.error('[course] formatCourse attachment count failed', e.message);
   }
 
+  // student count (students in this course's class_group)
+  let studentCount = 0;
+  if (course.class_group_id) {
+    try {
+      const sRes = await pool.query(
+        `SELECT COUNT(*)::int AS cnt FROM users WHERE class_group_id = $1`,
+        [course.class_group_id]
+      );
+      studentCount = Number(sRes.rows[0]?.cnt || 0);
+    } catch (e) {
+      console.error('[course] formatCourse student count failed', e.message);
+    }
+  }
+
   return {
     id: course.id,
     code: course.code,
@@ -64,6 +78,7 @@ async function formatCourse(course) {
     teacher,
     announcementCount,
     attachmentCount,
+    studentCount,
     createdAt: course.created_at || null,
     updatedAt: course.updated_at || null
   };
@@ -143,7 +158,7 @@ async function listAllCourses() {
 async function listCourseAnnouncements(courseId) {
   try {
     const res = await pool.query(
-      `SELECT a.id, a.title, a.body, a.priority, a.created_at, a.created_by_user_id,
+      `SELECT a.id, a.title, a.body, a.created_at, a.created_by_user_id,
               u.first_name, u.last_name
        FROM announcements a
        JOIN announcement_targets t ON t.announcement_id = a.id
@@ -175,7 +190,7 @@ async function listCourseAnnouncements(courseId) {
         id: r.id,
         title: r.title,
         body: r.body,
-        priority: r.priority,
+        priority: 'NORMAL',
         createdAt: r.created_at,
         createdBy: r.created_by_user_id,
         authorName: `${r.first_name || ''} ${r.last_name || ''}`.trim() || 'Unknown',
@@ -191,7 +206,7 @@ async function listCourseAnnouncements(courseId) {
 }
 
 async function createCourseAnnouncement(user, courseId, payload) {
-  const actor = await groupService.resolveActor(user);
+  const actor = await chatService.resolveActor(user);
   if (!actor || actor.role !== 'TEACHER') {
     return { status: 403, body: { message: 'Only teachers can publish course announcements.' } };
   }
@@ -211,8 +226,7 @@ async function createCourseAnnouncement(user, courseId, payload) {
 
   const title = payload.title;
   const body = payload.body;
-  const requestedPriority = String(payload.priority || 'NORMAL').toUpperCase();
-  const priority = requestedPriority === 'URGENT' ? 'URGENT' : 'NORMAL';
+  const priority = 'NORMAL';
   if (!title || !body) return { status: 400, body: { message: 'title and body are required' } };
 
   // Allow a single attachment payload or an attachments array.
@@ -287,7 +301,7 @@ async function createCourseAnnouncement(user, courseId, payload) {
 }
 
 async function createCourseAnnouncementWithFiles(user, courseId, payload, files) {
-  const actor = await groupService.resolveActor(user);
+  const actor = await chatService.resolveActor(user);
   if (!actor || actor.role !== 'TEACHER') {
     return { status: 403, body: { message: 'Only teachers can publish course announcements.' } };
   }
@@ -307,8 +321,7 @@ async function createCourseAnnouncementWithFiles(user, courseId, payload, files)
 
   const title = payload.title;
   const body = payload.body;
-  const requestedPriority = String(payload.priority || 'NORMAL').toUpperCase();
-  const priority = requestedPriority === 'URGENT' ? 'URGENT' : 'NORMAL';
+  const priority = 'NORMAL';
   if (!title || !body) return { status: 400, body: { message: 'title and body are required' } };
 
   try {

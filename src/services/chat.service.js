@@ -417,6 +417,30 @@ async function deleteChat(user, chatId) {
   }
 }
 
+async function submitFeedback(user, category, subject, details) {
+  const actor = await resolveActor(user);
+  if (!actor) return { status: 403, body: { message: "Unable to resolve user context." } };
+
+  try {
+    const adminRes = await pool.query(`SELECT u.id FROM users u JOIN user_roles ur ON u.id = ur.user_id JOIN roles r ON r.id = ur.role_id WHERE r.code = 'ADMIN' LIMIT 1`);
+    if (!adminRes.rows || !adminRes.rows.length) {
+      return { status: 500, body: { message: "No admin user found to receive feedback." } };
+    }
+    const adminId = adminRes.rows[0].id;
+
+    const cleanSubject = (subject || "").trim();
+    const cleanDetails = (details || "").trim();
+    const cleanCategory = (category || "OTHER").toUpperCase();
+
+    const initialMessage = `[Feedback ${cleanCategory}] ${cleanSubject}\n\n${cleanDetails}\n\nSender role: ${actor.role || 'Unknown'}\nSent at: ${new Date().toISOString()}`;
+
+    return await createOrGetDirectChat(user, adminId, initialMessage);
+  } catch (e) {
+    console.error('[chat] submitFeedback failed', e.message);
+    return { status: 500, body: { message: "Failed to submit feedback." } };
+  }
+}
+
 module.exports = {
   getUserById,
   canAccessChat,
@@ -428,5 +452,6 @@ module.exports = {
   getChatById,
   canDirectMessage,
   markChatRead,
-  deleteChat
+  deleteChat,
+  submitFeedback
 };

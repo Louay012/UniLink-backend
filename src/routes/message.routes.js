@@ -12,6 +12,7 @@ const upload = multer({
   }
 });
 
+router.post("/feedback", messageController.postFeedback);
 router.get("/messages/:chatId", messageController.getMessages);
 router.post("/messages/:chatId", messageController.postMessage);
 router.get("/chats/:chatId/messages", messageController.getMessages);

@@ -115,8 +115,11 @@ async function downloadAnnouncementAttachment(req, res) {
     if (!attachment) return res.status(404).json({ message: 'Attachment not found' });
 
     if (attachment.fileData) {
+      const isDownload = req.query.action === 'download';
+      const disposition = isDownload ? 'attachment' : 'inline';
+      
       res.setHeader('Content-Type', attachment.mimeType || 'application/octet-stream');
-      res.setHeader('Content-Disposition', `inline; filename="${encodeURIComponent(attachment.fileName)}"`);
+      res.setHeader('Content-Disposition', `${disposition}; filename="${attachment.fileName.replace(/"/g, '\\"')}"`);
       res.setHeader('Content-Length', attachment.fileData.length);
       return res.send(attachment.fileData);
     }

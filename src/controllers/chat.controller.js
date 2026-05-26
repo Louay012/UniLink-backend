@@ -1,4 +1,4 @@
-const groupService = require("../services/group.service");
+const chatService = require("../services/chat.service");
 
 function ensureAuthenticated(req, res) {
   if (req.user) {
@@ -13,8 +13,8 @@ async function getMessagingContacts(req, res) {
   if (!ensureAuthenticated(req, res)) return;
 
   try {
-    const actor = await groupService.resolveActor(req.user);
-    const items = await groupService.listAllowedContacts(req.user);
+    const actor = await chatService.resolveActor(req.user);
+    const items = await chatService.listAllowedContacts(req.user);
     res.json({ user: req.user, actorUserId: actor?.id || null, items });
   } catch (err) {
     console.error('[controller] getMessagingContacts failed', err);
@@ -22,18 +22,18 @@ async function getMessagingContacts(req, res) {
   }
 }
 
-async function getGroups(req, res) {
+async function getChats(req, res) {
   if (!ensureAuthenticated(req, res)) {
     return;
   }
 
   try {
-    const actor = await groupService.resolveActor(req.user);
-    const items = await groupService.listUserChats(req.user, req.query.courseId);
+    const actor = await chatService.resolveActor(req.user);
+    const items = await chatService.listUserChats(req.user, req.query.courseId);
     res.json({ user: req.user, actorUserId: actor?.id || null, items });
   } catch (err) {
-    console.error('[controller] getGroups failed', err);
-    res.status(500).json({ message: 'Failed to load groups.' });
+    console.error('[controller] getChats failed', err);
+    res.status(500).json({ message: 'Failed to load chats.' });
   }
 }
 
@@ -46,7 +46,7 @@ async function createDirectGroup(req, res) {
   const initialMessage = (req.body.initialMessage || "").trim();
 
   try {
-    const result = await groupService.createOrGetDirectChat(req.user, targetUserId, initialMessage);
+    const result = await chatService.createOrGetDirectChat(req.user, targetUserId, initialMessage);
     return res.status(result.status).json(result.body);
   } catch (err) {
     console.error('[controller] createDirectGroup failed', err);
@@ -60,7 +60,7 @@ async function markChatRead(req, res) {
   }
 
   try {
-    const result = await groupService.markChatRead(req.user, req.params.chatId);
+    const result = await chatService.markChatRead(req.user, req.params.chatId);
     return res.status(result.status).json(result.body);
   } catch (err) {
     console.error('[controller] markChatRead failed', err);
@@ -74,7 +74,7 @@ async function deleteChat(req, res) {
   }
 
   try {
-    const result = await groupService.deleteChat(req.user, req.params.chatId);
+    const result = await chatService.deleteChat(req.user, req.params.chatId);
     return res.status(result.status).json(result.body);
   } catch (err) {
     console.error('[controller] deleteChat failed', err);
@@ -84,7 +84,7 @@ async function deleteChat(req, res) {
 
 module.exports = {
   getMessagingContacts,
-  getGroups,
+  getChats,
   createDirectGroup,
   markChatRead,
   deleteChat
