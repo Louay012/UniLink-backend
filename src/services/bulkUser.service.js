@@ -8,14 +8,17 @@ const pool = require('../config/db'); // adjust to your db pool path
 const SALT_ROUNDS = 10;
 
 const HEADER_ALIASES = {
-  firstname:  'firstName',
-  first_name: 'firstName',
-  lastname:   'lastName',
-  last_name:  'lastName',
-  email:      'email',
-  password:   'password',
-  pass:       'password',
-  role:       'role',
+  firstname:   'firstName',
+  first_name:  'firstName',
+  lastname:    'lastName',
+  last_name:   'lastName',
+  email:       'email',
+  password:    'password',
+  pass:        'password',
+  role:        'role',
+  class_group: 'classGroup',
+  classgroup:  'classGroup',
+  class:       'classGroup',
 };
 
 const REQUIRED_FIELDS = ['firstName', 'lastName', 'email', 'password'];
@@ -40,7 +43,7 @@ function parseFile(buffer, originalName) {
       return parseCSV(text, {
         skip_empty_lines: true,
         trim: true,
-        columns: ['firstName', 'lastName', 'email', 'password', 'role'],
+        columns: ['firstName', 'lastName', 'email', 'password', 'role', 'classGroup'],
       });
     }
   }
@@ -170,15 +173,41 @@ async function bulkInsertUsers(fileBuffer, originalName) {
     return { total: rawRows.length, inserted: 0, failed: failedRows.length, errors: failedRows, duplicates };
   }
 
+  // 5.5. Load all needed class groups
+  const classGroupCodesNeeded = [...new Set(insertable.filter(i => i.data.classGroup).map(i => i.data.classGroup))];
+  const classGroupMap = {}; // { 'GL1': uuid, ... }
+  if (classGroupCodesNeeded.length > 0) {
+    const { rows: cgRows } = await pool.query(
+      `SELECT id, code FROM class_groups WHERE code = ANY($1::text[])`,
+      [classGroupCodesNeeded]
+    );
+    for (const row of cgRows) classGroupMap[row.code] = row.id;
+  }
+
+  // Check if any specified class groups weren't found
+  const fullyInsertable = [];
+  for (const item of insertable) {
+    if (item.data.classGroup && !classGroupMap[item.data.classGroup]) {
+      failedRows.push({ row: item.rowNumber, data: item.data, errors: [`Class group "${item.data.classGroup}" not found in database`] });
+    } else {
+      fullyInsertable.push(item);
+    }
+  }
+
+  if (!fullyInsertable.length) {
+    return { total: rawRows.length, inserted: 0, failed: failedRows.length, errors: failedRows, duplicates };
+  }
+
   // 6. Hash all passwords in parallel
   const prepared = await Promise.all(
-    insertable.map(async (item) => ({
+    fullyInsertable.map(async (item) => ({
       rowNumber:     item.rowNumber,
       first_name:    item.data.firstName,
       last_name:     item.data.lastName,
       email:         item.data.email.toLowerCase(),
       password_hash: await bcrypt.hash(item.data.password, SALT_ROUNDS),
       role:          (item.data.role || 'STUDENT').toUpperCase(),
+      classGroup:    item.data.classGroup || null,
     }))
   );
 
@@ -221,6 +250,32 @@ async function bulkInsertUsers(fileBuffer, originalName) {
          VALUES ${rolePlaceholders.join(', ')}
          ON CONFLICT DO NOTHING`,
         roleValues
+      );
+    }
+
+    // 9. Insert student profiles if classGroup is set
+    const profileValues = [];
+    const profilePlaceholders = [];
+    let pi = 1;
+    for (const u of prepared) {
+      const userId = emailToId[u.email];
+      if (!userId || !u.classGroup) continue;
+      
+      // we know u.classGroup is valid because of steps above
+      const cgId = classGroupMap[u.classGroup];
+      if (cgId && u.role === 'STUDENT') {
+        profileValues.push(userId, cgId);
+        profilePlaceholders.push(`($${pi}, $${pi+1})`);
+        pi += 2;
+      }
+    }
+
+    if (profilePlaceholders.length > 0) {
+      await pool.query(
+        `INSERT INTO student_profiles (user_id, class_group_id)
+         VALUES ${profilePlaceholders.join(', ')}
+         ON CONFLICT (user_id) DO UPDATE SET class_group_id = EXCLUDED.class_group_id`,
+        profileValues
       );
     }
   }

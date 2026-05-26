@@ -1,6 +1,6 @@
 const pool = require("../config/db");
 const socketUtils = require("../socket");
-const { getChatById, formatChatForUser, canAccessChat, resolveActor } = require("./chat.service");
+const { getChatById, formatChatForUser, canAccessChat, resolveActor, canDirectMessage, getUserById } = require("./group.service");
 
 let messagingTablesReadyPromise = null;
 
@@ -445,7 +445,7 @@ async function listChatMessages(user, chatId, options = {}) {
        JOIN users u ON u.id = m.sender_user_id
        WHERE m.chat_id = $1::uuid
          AND ($2::timestamptz IS NULL OR m.created_at < $2::timestamptz)`;
-    
+
     const params = [chat.id, before];
 
     if (q) {
@@ -531,6 +531,20 @@ async function createChatMessageWithAttachments(user, chatId, bodyOrPayload, att
   try {
     if (!(await canAccessChat(actor.id, chat.id))) {
       return { status: 403, body: { message: "You are not a member of this chat." } };
+    }
+
+    if (chat.chat_type === "DIRECT") {
+      const otherMemberRes = await pool.query(
+        `SELECT user_id FROM chat_members
+         WHERE chat_id::text = $1 AND user_id::text != $2
+         LIMIT 1`,
+        [String(chat.id), String(actor.id)]
+      );
+      const otherMemberId = otherMemberRes.rows?.[0]?.user_id;
+      const target = otherMemberId ? await getUserById(otherMemberId) : null;
+      if (!target || !(await canDirectMessage(actor, target))) {
+        return { status: 403, body: { message: "Direct messaging this user is not allowed by policy." } };
+      }
     }
 
     if (replyToMessageId) {
@@ -626,11 +640,11 @@ async function createChatMessageWithAttachments(user, chatId, bodyOrPayload, att
           [chat.id]
         );
         const memberIds = (membersRes.rows || []).map(r => r.user_id);
-        
+
         // Get sender name for notification
         const senderName = sender?.name || "Someone";
         const isGroupChat = chat.chat_type !== "DIRECT";
-        
+
         let chatName = chat.name || "Chat";
         // For direct chats, get the other participant's name
         if (!isGroupChat) {
@@ -645,12 +659,12 @@ async function createChatMessageWithAttachments(user, chatId, bodyOrPayload, att
             }
           }
         }
-        
-        const notifTitle = isGroupChat 
-          ? `${senderName} in ${chatName}` 
+
+        const notifTitle = isGroupChat
+          ? `${senderName} in ${chatName}`
           : chatName;
         const notifBody = cleanBody || (createdAttachments.length ? `Sent ${createdAttachments.length} file(s)` : "Sent a message");
-        
+
         for (const memberId of memberIds) {
           if (String(memberId) === String(actor.id)) continue; // Skip sender
           // Emit to user's personal room (they join with their userId)

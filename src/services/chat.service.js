@@ -45,7 +45,7 @@ async function getUserById(userId) {
   if (!userId) return null;
   try {
     const res = await pool.query(
-      `SELECT u.id, u.first_name, u.last_name,
+      `SELECT u.id, u.first_name, u.last_name, u.email,
               (SELECT r.code FROM user_roles ur JOIN roles r ON r.id = ur.role_id WHERE ur.user_id = u.id LIMIT 1) AS role,
               sp.class_group_id, cg.code AS class_group_code
        FROM users u
@@ -88,8 +88,59 @@ async function studentCanMessageTeacher(student, teacher) {
   }
 }
 
+async function studentCanMessageCoordinator(student, coordinator) {
+  if (!student || !coordinator) return false;
+  if (!student.classGroupId) return false;
+  try {
+    const res = await pool.query(
+      `SELECT 1
+       FROM class_groups cg
+       WHERE cg.id::text = $1
+         AND cg.coordinator_user_id::text = $2
+       LIMIT 1`,
+      [String(student.classGroupId), String(coordinator.id)]
+    );
+    return res.rows && res.rows.length > 0;
+  } catch (e) {
+    console.error('[group] studentCanMessageCoordinator failed', e.message);
+    return false;
+  }
+}
+
 async function canDirectMessage(sender, target) {
-  if (!sender || !target || sender.id === target.id) return false;
+  if (!sender || !target || String(sender.id) === String(target.id)) return false;
+
+  const senderRole = String(sender.role || '').toUpperCase();
+  const targetRole = String(target.role || '').toUpperCase();
+
+  if (senderRole === 'STUDENT' && targetRole === 'ADMIN') {
+    return false;
+  }
+
+  if (senderRole === 'ADMIN') {
+    return true;
+  }
+
+  if (senderRole === 'STUDENT') {
+    if (targetRole === 'TEACHER') {
+      return studentCanMessageTeacher(sender, target);
+    }
+
+    if (targetRole === 'COORDINATOR') {
+      return studentCanMessageCoordinator(sender, target);
+    }
+
+    return false;
+  }
+
+  if (targetRole === 'STUDENT' && senderRole === 'TEACHER') {
+    return studentCanMessageTeacher(target, sender);
+  }
+
+  if (targetRole === 'STUDENT' && senderRole === 'COORDINATOR') {
+    return studentCanMessageCoordinator(target, sender);
+  }
+
   return true;
 }
 
@@ -179,7 +230,7 @@ async function listAllowedContacts(user) {
 
   try {
     const res = await pool.query(
-      `SELECT u.id, u.first_name, u.last_name,
+      `SELECT u.id, u.first_name, u.last_name, u.email,
               (SELECT r.code FROM user_roles ur JOIN roles r ON r.id = ur.role_id WHERE ur.user_id = u.id LIMIT 1) AS role,
               sp.class_group_id, cg.code AS class_group_code
        FROM users u
@@ -189,11 +240,20 @@ async function listAllowedContacts(user) {
       [String(actor.id || '')]
     );
 
-    const candidates = (res.rows || []).map((r) => ({ id: r.id, name: `${r.first_name || ''} ${r.last_name || ''}`.trim(), role: r.role, classGroupId: r.class_group_id, classGroupCode: r.class_group_code }));
+    const candidates = (res.rows || []).map((r) => ({
+      id: r.id,
+      name: `${r.first_name || ''} ${r.last_name || ''}`.trim(),
+      email: r.email || null,
+      role: r.role,
+      classGroupId: r.class_group_id,
+      classGroupCode: r.class_group_code
+    }));
 
     const allowed = [];
-    for (const c of candidates) {
-      if (await canDirectMessage(actor, c)) allowed.push(c);
+    for (const candidate of candidates) {
+      if (await canDirectMessage(actor, candidate)) {
+        allowed.push(candidate);
+      }
     }
 
     return allowed;

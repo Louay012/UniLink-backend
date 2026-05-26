@@ -1,6 +1,52 @@
 const pool = require("../config/db");
 const bcrypt = require("bcryptjs");
 
+let auditTableReadyPromise = null;
+
+function getActorUserId(actor) {
+  return actor?.id || actor?.userId || null;
+}
+
+async function ensureAuditLogTable() {
+  if (!auditTableReadyPromise) {
+    auditTableReadyPromise = pool.query(
+      `CREATE TABLE IF NOT EXISTS audit_logs (
+         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+         actor_user_id UUID REFERENCES users(id) ON DELETE SET NULL,
+         action VARCHAR(80) NOT NULL,
+         target_type VARCHAR(80) NOT NULL,
+         target_id UUID,
+         metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+       )`
+    ).catch((error) => {
+      auditTableReadyPromise = null;
+      throw error;
+    });
+  }
+
+  return auditTableReadyPromise;
+}
+
+async function recordAdminAuditLog(actor, action, targetType, targetId, metadata = {}) {
+  try {
+    await ensureAuditLogTable();
+    await pool.query(
+      `INSERT INTO audit_logs (actor_user_id, action, target_type, target_id, metadata)
+       VALUES ($1::uuid, $2, $3, $4::uuid, $5::jsonb)`,
+      [
+        getActorUserId(actor),
+        action,
+        targetType,
+        targetId || null,
+        JSON.stringify(metadata || {})
+      ]
+    );
+  } catch (err) {
+    console.warn("[audit] Failed to write admin audit log:", err.message);
+  }
+}
+
 // ─── GET ALL USERS ────────────────────────────────────────────────────────────
 async function getAllUsers() {
   const result = await pool.query(
@@ -12,6 +58,39 @@ async function getAllUsers() {
      ORDER BY u.created_at DESC`
   );
   return result.rows;
+}
+
+async function getAuditLogs({ limit = 100 } = {}) {
+  await ensureAuditLogTable();
+  const parsedLimit = Number.parseInt(String(limit), 10);
+  const safeLimit = Number.isFinite(parsedLimit) ? Math.min(Math.max(parsedLimit, 1), 500) : 100;
+
+  const result = await pool.query(
+    `SELECT al.id, al.actor_user_id, al.action, al.target_type, al.target_id,
+            al.metadata, al.created_at,
+            actor.first_name AS actor_first_name,
+            actor.last_name AS actor_last_name,
+            actor.email AS actor_email
+     FROM audit_logs al
+     LEFT JOIN users actor ON actor.id = al.actor_user_id
+     ORDER BY al.created_at DESC
+     LIMIT $1`,
+    [safeLimit]
+  );
+
+  return (result.rows || []).map((row) => ({
+    id: row.id,
+    actorUserId: row.actor_user_id,
+    actorName: row.actor_first_name || row.actor_last_name
+      ? `${row.actor_first_name || ""} ${row.actor_last_name || ""}`.trim()
+      : null,
+    actorEmail: row.actor_email || null,
+    action: row.action,
+    targetType: row.target_type,
+    targetId: row.target_id,
+    metadata: row.metadata || {},
+    createdAt: row.created_at ? new Date(row.created_at).toISOString() : null
+  }));
 }
 
 // ─── GET ONE USER ─────────────────────────────────────────────────────────────
@@ -30,7 +109,7 @@ async function getUserById(id) {
 }
 
 // ─── CREATE USER (by admin) ───────────────────────────────────────────────────
-async function createUser({ firstName, lastName, email, password, role }) {
+async function createUser({ firstName, lastName, email, password, role }, actor = null) {
   const existing = await pool.query("SELECT id FROM users WHERE email = $1", [email]);
   if (existing.rows.length > 0) throw new Error("Email already in use");
 
@@ -52,11 +131,17 @@ async function createUser({ firstName, lastName, email, password, role }) {
     roleRow.rows[0].id
   ]);
 
+  await recordAdminAuditLog(actor, "ADMIN_USER_CREATED", "user", user.id, {
+    email: user.email,
+    role: role || "STUDENT"
+  });
+
   return user;
 }
 
 // ─── UPDATE USER ROLE ─────────────────────────────────────────────────────────
-async function updateUserRole(id, newRole) {
+async function updateUserRole(id, newRole, actor = null) {
+  const previousUser = await getUserById(id);
   const roleRow = await pool.query("SELECT id FROM roles WHERE code = $1", [newRole]);
   if (roleRow.rows.length === 0) throw new Error("Invalid role");
 
@@ -66,18 +151,30 @@ async function updateUserRole(id, newRole) {
     roleRow.rows[0].id
   ]);
 
-  return getUserById(id);
+  const updatedUser = await getUserById(id);
+  await recordAdminAuditLog(actor, "ADMIN_USER_ROLE_UPDATED", "user", id, {
+    email: updatedUser.email,
+    previousRole: previousUser.role,
+    newRole
+  });
+
+  return updatedUser;
 }
 
 // ─── DELETE USER ──────────────────────────────────────────────────────────────
-async function deleteUser(id) {
+async function deleteUser(id, actor = null) {
+  const user = await getUserById(id);
   const result = await pool.query("DELETE FROM users WHERE id = $1 RETURNING id", [id]);
   if (result.rows.length === 0) throw new Error("User not found");
+  await recordAdminAuditLog(actor, "ADMIN_USER_DELETED", "user", id, {
+    email: user.email,
+    role: user.role
+  });
   return { message: "User deleted successfully" };
 }
 
 // Assign a course to a user (teacher -> course_teachers, student -> student_profiles.class_group_id)
-async function assignCourseToUser(userId, courseId) {
+async function assignCourseToUser(userId, courseId, actor = null) {
   const courseRes = await pool.query(
     `SELECT id, class_group_id FROM courses WHERE id::text = $1 LIMIT 1`,
     [String(courseId)]
@@ -94,12 +191,24 @@ async function assignCourseToUser(userId, courseId) {
       [String(courseId), String(userId)]
     );
     if (exists.rows && exists.rows.length) {
+      await recordAdminAuditLog(actor, "ADMIN_COURSE_ASSIGNED", "course", course.id, {
+        userId,
+        courseId,
+        userRole: role,
+        result: "already_assigned"
+      });
       return { message: "Teacher already assigned to course" };
     }
     await pool.query(`INSERT INTO course_teachers (course_id, user_id) VALUES ($1::uuid, $2::uuid)`, [
       String(courseId),
       String(userId)
     ]);
+    await recordAdminAuditLog(actor, "ADMIN_COURSE_ASSIGNED", "course", course.id, {
+      userId,
+      courseId,
+      userRole: role,
+      result: "teacher_assigned"
+    });
     return { message: "Teacher assigned to course" };
   }
 
@@ -116,6 +225,13 @@ async function assignCourseToUser(userId, courseId) {
         `UPDATE student_profiles SET class_group_id = $1 WHERE user_id::text = $2`,
         [String(classGroupId), String(userId)]
       );
+      await recordAdminAuditLog(actor, "ADMIN_COURSE_ASSIGNED", "course", course.id, {
+        userId,
+        courseId,
+        userRole: role,
+        classGroupId,
+        result: "student_class_group_updated"
+      });
       return { message: "Student profile updated with new class group" };
     }
 
@@ -123,6 +239,13 @@ async function assignCourseToUser(userId, courseId) {
       `INSERT INTO student_profiles (user_id, class_group_id) VALUES ($1::uuid, $2::uuid)`,
       [String(userId), String(classGroupId)]
     );
+    await recordAdminAuditLog(actor, "ADMIN_COURSE_ASSIGNED", "course", course.id, {
+      userId,
+      courseId,
+      userRole: role,
+      classGroupId,
+      result: "student_profile_created"
+    });
     return { message: "Student profile created and assigned to class group" };
   }
 
@@ -313,6 +436,7 @@ async function assignCourseToClassGroup(courseId, classGroupId) {
 
 module.exports = {
   getAllUsers,
+  getAuditLogs,
   getUserById,
   createUser,
   updateUserRole,

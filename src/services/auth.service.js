@@ -139,12 +139,15 @@ async function searchUsers(q) {
   if (!q) return [];
   const searchQuery = `%${q}%`;
   const result = await pool.query(
-    `SELECT id, first_name || ' ' || last_name AS name, email
-     FROM users
-     WHERE first_name ILIKE $1 
-        OR last_name ILIKE $1 
-        OR first_name || ' ' || last_name ILIKE $1 
-        OR email ILIKE $1
+    `SELECT u.id, u.first_name || ' ' || u.last_name AS name, u.email, r.code AS role
+     FROM users u
+     LEFT JOIN user_roles ur ON ur.user_id = u.id
+     LEFT JOIN roles r ON r.id = ur.role_id
+     WHERE u.first_name ILIKE $1 
+        OR u.last_name ILIKE $1 
+        OR u.first_name || ' ' || u.last_name ILIKE $1 
+        OR u.email ILIKE $1
+        OR r.code ILIKE $1
      ORDER BY first_name, last_name
      LIMIT 20`,
     [searchQuery]

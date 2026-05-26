@@ -9,6 +9,15 @@ async function getAllUsers(req, res) {
   }
 }
 
+async function getAuditLogs(req, res) {
+  try {
+    const items = await adminService.getAuditLogs({ limit: req.query.limit });
+    res.json({ items });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+}
+
 async function getUserById(req, res) {
   try {
     const user = await adminService.getUserById(req.params.id);
@@ -20,7 +29,7 @@ async function getUserById(req, res) {
 
 async function createUser(req, res) {
   try {
-    const user = await adminService.createUser(req.body);
+    const user = await adminService.createUser(req.body, req.user);
     res.status(201).json(user);
   } catch (err) {
     res.status(400).json({ error: err.message });
@@ -29,7 +38,7 @@ async function createUser(req, res) {
 
 async function updateUserRole(req, res) {
   try {
-    const user = await adminService.updateUserRole(req.params.id, req.body.role);
+    const user = await adminService.updateUserRole(req.params.id, req.body.role, req.user);
     res.json(user);
   } catch (err) {
     res.status(400).json({ error: err.message });
@@ -38,7 +47,7 @@ async function updateUserRole(req, res) {
 
 async function deleteUser(req, res) {
   try {
-    const result = await adminService.deleteUser(req.params.id);
+    const result = await adminService.deleteUser(req.params.id, req.user);
     res.json(result);
   } catch (err) {
     res.status(404).json({ error: err.message });
@@ -51,7 +60,7 @@ async function assignCourse(req, res) {
   if (!courseId) return res.status(400).json({ error: 'courseId is required' });
 
   try {
-    const result = await adminService.assignCourseToUser(userId, courseId);
+    const result = await adminService.assignCourseToUser(userId, courseId, req.user);
     res.json(result);
   } catch (err) {
     console.error('[admin] assignCourse failed', err.message);
@@ -154,6 +163,7 @@ async function assignCourseClassGroup(req, res) {
 // keep exports explicit and stable
 module.exports = {
   getAllUsers,
+  getAuditLogs,
   getUserById,
   createUser,
   updateUserRole,

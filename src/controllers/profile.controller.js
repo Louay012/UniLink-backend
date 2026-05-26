@@ -34,6 +34,18 @@ async function changePassword(req, res) {
   }
 }
 
+async function updatePhone(req, res) {
+  if (!req.user) return res.status(401).json({ message: "Authentication required." });
+  const { phone } = req.body || {};
+  try {
+    const result = await profileService.updatePhone(req.user, phone);
+    return res.status(result.status).json(result.body);
+  } catch (err) {
+    console.error("[profile.controller] updatePhone error:", err);
+    return res.status(500).json({ message: "Failed to update phone." });
+  }
+}
+
 // uploadPhoto uses multer middleware — exported as array for use in routes
 const uploadPhotoMiddleware = upload.single("photo");
 
@@ -80,4 +92,4 @@ async function deletePhoto(req, res) {
   }
 }
 
-module.exports = { getProfile, changePassword, uploadPhoto, uploadPhotoMiddleware, getPhoto, deletePhoto };
+module.exports = { getProfile, changePassword, updatePhone, uploadPhoto, uploadPhotoMiddleware, getPhoto, deletePhoto };

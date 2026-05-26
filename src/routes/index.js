@@ -6,6 +6,7 @@ const chatRoutes = require("./chat.routes");
 const messageRoutes = require("./message.routes");
 const adminRoutes   = require("./admin.routes");
 const profileRoutes = require("./profile.routes");
+const feedbackRoutes = require("./feedback.routes");
 
 const router = express.Router();
 
@@ -13,6 +14,7 @@ router.use(authRoutes);
 router.use(courseRoutes);
 router.use(chatRoutes);
 router.use(messageRoutes);
+router.use(feedbackRoutes);
 router.use(adminRoutes);
 router.use(profileRoutes);
 

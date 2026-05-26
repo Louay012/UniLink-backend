@@ -35,6 +35,18 @@ async function getCourse(req, res) {
   }
 }
 
+async function getGlobalAnnouncements(req, res) {
+  if (!ensureAuthenticated(req, res)) return;
+
+  try {
+    const items = await courseService.listVisibleAnnouncements(req.user);
+    return res.json({ items });
+  } catch (err) {
+    console.error('[controller] getGlobalAnnouncements failed', err);
+    return res.status(500).json({ message: 'Failed to load announcements.' });
+  }
+}
+
 async function getAnnouncements(req, res) {
   if (!ensureAuthenticated(req, res)) return;
 
@@ -185,6 +197,7 @@ async function getUnreadCounts(req, res) {
 module.exports = {
   getCourses,
   getCourse,
+  getGlobalAnnouncements,
   getAnnouncements,
   postAnnouncement,
   postAnnouncementWithFiles,
