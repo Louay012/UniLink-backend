@@ -10,6 +10,7 @@ const router = express.Router();
 router.use("/admin", requireAdmin);
 
 router.get("/admin/users",           adminController.getAllUsers);
+router.get("/admin/audit-logs",      adminController.getAuditLogs);
 router.get("/admin/courses",         adminController.getAllCourses);
 router.post("/admin/courses",        adminController.createCourse);
 router.get("/admin/departments",     adminController.getAllDepartments);

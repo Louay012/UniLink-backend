@@ -34,13 +34,41 @@ function emitPresenceChange(userId, isOnline) {
   io.emit("presence.changed", { userId: String(userId), isOnline: Boolean(isOnline) });
 }
 
+function emitPresenceSnapshot(socket) {
+  socket.emit("presence.snapshot", {
+    userIds: Array.from(onlineUsers.keys()).map(String)
+  });
+}
+
+function decrementPresence(userId) {
+  if (!userId || !onlineUsers.has(userId)) return;
+
+  const nextCount = Math.max((onlineUsers.get(userId) || 0) - 1, 0);
+  if (nextCount === 0) {
+    onlineUsers.delete(userId);
+    emitPresenceChange(userId, false);
+  } else {
+    onlineUsers.set(userId, nextCount);
+  }
+}
+
 io.on("connection", (socket) => {
   console.log("[socket] connected", socket.id);
 
-  // User joins their personal notification room
-  socket.on("user:join", ({ userId }) => {
+  // User joins their personal notification room and all their chat rooms
+  socket.on("user:join", async ({ userId }) => {
     if (userId) {
       const normalizedUserId = String(userId);
+      if (socket.data.userId === normalizedUserId) {
+        socket.join(normalizedUserId);
+        emitPresenceSnapshot(socket);
+        return;
+      }
+
+      if (socket.data.userId && socket.data.userId !== normalizedUserId) {
+        decrementPresence(socket.data.userId);
+      }
+
       socket.data.userId = normalizedUserId;
       socket.join(normalizedUserId);
 
@@ -49,8 +77,23 @@ io.on("connection", (socket) => {
       if (nextCount === 1) {
         emitPresenceChange(normalizedUserId, true);
       }
+      emitPresenceSnapshot(socket);
 
       console.log(`[socket] ${socket.id} joined user room ${userId}`);
+      
+      // Also join all chat rooms the user belongs to
+      try {
+        const pool = require("./src/config/db");
+        const chatsRes = await pool.query(
+          "SELECT chat_id FROM chat_members WHERE user_id = $1",
+          [normalizedUserId]
+        );
+        for (const row of chatsRes.rows) {
+          socket.join(row.chat_id);
+        }
+      } catch (err) {
+        console.error(`[socket] Error auto-joining chats for user ${userId}:`, err);
+      }
     }
   });
 
@@ -108,15 +151,7 @@ io.on("connection", (socket) => {
 
   socket.on("disconnect", () => {
     const userId = socket.data.userId;
-    if (userId && onlineUsers.has(userId)) {
-      const nextCount = Math.max((onlineUsers.get(userId) || 0) - 1, 0);
-      if (nextCount === 0) {
-        onlineUsers.delete(userId);
-        emitPresenceChange(userId, false);
-      } else {
-        onlineUsers.set(userId, nextCount);
-      }
-    }
+    decrementPresence(userId);
 
     console.log("[socket] disconnected", socket.id);
   });

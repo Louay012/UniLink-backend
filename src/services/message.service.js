@@ -1,6 +1,6 @@
 const pool = require("../config/db");
 const socketUtils = require("../socket");
-const { getChatById, formatChatForUser, canAccessChat, resolveActor } = require("./group.service");
+const { getChatById, formatChatForUser, canAccessChat, resolveActor, canDirectMessage, getUserById } = require("./group.service");
 
 let messagingTablesReadyPromise = null;
 
@@ -531,6 +531,20 @@ async function createChatMessageWithAttachments(user, chatId, bodyOrPayload, att
   try {
     if (!(await canAccessChat(actor.id, chat.id))) {
       return { status: 403, body: { message: "You are not a member of this chat." } };
+    }
+
+    if (chat.chat_type === "DIRECT") {
+      const otherMemberRes = await pool.query(
+        `SELECT user_id FROM chat_members
+         WHERE chat_id::text = $1 AND user_id::text != $2
+         LIMIT 1`,
+        [String(chat.id), String(actor.id)]
+      );
+      const otherMemberId = otherMemberRes.rows?.[0]?.user_id;
+      const target = otherMemberId ? await getUserById(otherMemberId) : null;
+      if (!target || !(await canDirectMessage(actor, target))) {
+        return { status: 403, body: { message: "Direct messaging this user is not allowed by policy." } };
+      }
     }
 
     if (replyToMessageId) {

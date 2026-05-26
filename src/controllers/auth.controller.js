@@ -1,4 +1,5 @@
 const authService = require("../services/auth.service");
+const groupService = require("../services/group.service");
 
 // POST /api/auth/register
 async function register(req, res) {
@@ -33,8 +34,15 @@ function me(req, res) {
 // GET /users/search
 async function searchUsers(req, res) {
   try {
-    const q = req.query.q;
-    const users = await authService.searchUsers(q);
+    const q = String(req.query.q || "").trim().toLowerCase();
+    const allowedContacts = await groupService.listAllowedContacts(req.user);
+    const users = allowedContacts
+      .filter((contact) => {
+        if (!q) return true;
+        const haystack = `${contact.name || ""} ${contact.email || ""} ${contact.role || ""}`.toLowerCase();
+        return haystack.includes(q);
+      })
+      .slice(0, 20);
     res.json(users);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -42,3 +50,17 @@ async function searchUsers(req, res) {
 }
 
 module.exports = { register, login, health, me, searchUsers };
+
+async function getUserById(req, res) {
+  try {
+    const id = req.params.id;
+    const user = await groupService.getUserById(id);
+    if (!user) return res.status(404).json({ message: "User not found" });
+    return res.json(user);
+  } catch (err) {
+    console.error('[controller] getUserById failed', err);
+    return res.status(500).json({ message: 'Failed to load user.' });
+  }
+}
+
+module.exports.getUserById = getUserById;

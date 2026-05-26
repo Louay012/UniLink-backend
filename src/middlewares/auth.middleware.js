@@ -19,7 +19,6 @@ function attachResolvedUser(req, _res, next) {
 
     // No token — that's fine for public routes like /login and /register
     req.user = null;
-    console.debug("[auth] No Authorization header or missing Bearer token");
     return next();
   }
 

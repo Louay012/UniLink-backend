@@ -1,6 +1,22 @@
 const pool = require("../config/db");
 const bcrypt = require("bcryptjs");
 
+let profilePhotoColumnsReadyPromise = null;
+
+async function ensureProfilePhotoColumns() {
+  if (!profilePhotoColumnsReadyPromise) {
+    profilePhotoColumnsReadyPromise = (async () => {
+      await pool.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS profile_photo BYTEA");
+      await pool.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS profile_photo_mime VARCHAR(120)");
+    })().catch((error) => {
+      profilePhotoColumnsReadyPromise = null;
+      throw error;
+    });
+  }
+
+  return profilePhotoColumnsReadyPromise;
+}
+
 async function getProfile(user) {
   if (!user || !user.id) {
     return { status: 401, body: { message: "Authentication required." } };
@@ -157,9 +173,38 @@ async function changePassword(user, currentPassword, newPassword) {
   }
 }
 
+async function updatePhone(user, phone) {
+  if (!user?.id) return { status: 401, body: { message: "Authentication required." } };
+
+  const normalizedPhone = typeof phone === "string" ? phone.trim() : "";
+  if (normalizedPhone.length > 50) {
+    return { status: 400, body: { message: "Phone number must be 50 characters or fewer." } };
+  }
+  if (normalizedPhone && !/^[0-9+\-().\s]+$/.test(normalizedPhone)) {
+    return { status: 400, body: { message: "Phone number can only include digits, spaces, +, -, parentheses, or periods." } };
+  }
+
+  try {
+    const result = await pool.query(
+      `UPDATE users
+       SET phone = $2
+       WHERE id = $1
+       RETURNING phone`,
+      [user.id, normalizedPhone || null]
+    );
+
+    if (!result.rows.length) return { status: 404, body: { message: "User not found." } };
+    return { status: 200, body: { message: "Phone updated.", phone: result.rows[0].phone } };
+  } catch (err) {
+    console.error("[profile.service] updatePhone error:", err);
+    return { status: 500, body: { message: "Failed to update phone." } };
+  }
+}
+
 async function saveProfilePhoto(user, buffer, mimeType) {
   if (!user?.id) return { status: 401, body: { message: "Authentication required." } };
   try {
+    await ensureProfilePhotoColumns();
     await pool.query(
       "UPDATE users SET profile_photo = $2, profile_photo_mime = $3 WHERE id = $1",
       [user.id, buffer, mimeType]
@@ -173,6 +218,7 @@ async function saveProfilePhoto(user, buffer, mimeType) {
 
 async function getProfilePhoto(userId) {
   try {
+    await ensureProfilePhotoColumns();
     const result = await pool.query(
       "SELECT profile_photo, profile_photo_mime FROM users WHERE id = $1",
       [userId]
@@ -194,6 +240,7 @@ async function getProfilePhoto(userId) {
 async function deleteProfilePhoto(user) {
   if (!user?.id) return { status: 401, body: { message: "Authentication required." } };
   try {
+    await ensureProfilePhotoColumns();
     await pool.query(
       "UPDATE users SET profile_photo = NULL, profile_photo_mime = NULL WHERE id = $1",
       [user.id]
@@ -205,4 +252,4 @@ async function deleteProfilePhoto(user) {
   }
 }
 
-module.exports = { getProfile, changePassword, saveProfilePhoto, getProfilePhoto, deleteProfilePhoto };
+module.exports = { getProfile, changePassword, updatePhone, saveProfilePhoto, getProfilePhoto, deleteProfilePhoto };
