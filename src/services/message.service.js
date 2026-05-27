@@ -1,6 +1,6 @@
 const pool = require("../config/db");
 const socketUtils = require("../socket");
-const { getChatById, formatChatForUser, canAccessChat, resolveActor, canDirectMessage, getUserById } = require("./group.service");
+const { getChatById, formatChatForUser, canAccessChat, resolveActor, canDirectMessage, getUserById } = require("./chat.service");
 
 let messagingTablesReadyPromise = null;
 

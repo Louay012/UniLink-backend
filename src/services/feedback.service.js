@@ -1,5 +1,5 @@
 const pool = require("../config/db");
-const { resolveActor } = require("./group.service");
+const { resolveActor } = require("./chat.service");
 
 let feedbackTablesReadyPromise = null;
 

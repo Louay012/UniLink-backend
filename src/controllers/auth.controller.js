@@ -1,5 +1,5 @@
 const authService = require("../services/auth.service");
-const groupService = require("../services/group.service");
+const groupService = require("../services/chat.service");
 
 // POST /api/auth/register
 async function register(req, res) {

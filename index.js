@@ -105,7 +105,7 @@ io.on("connection", (socket) => {
         return;
       }
       try {
-        const { canAccessChat } = require("./src/services/group.service");
+        const { canAccessChat } = require("./src/services/chat.service");
         const hasAccess = await canAccessChat(userId, chatId);
         if (hasAccess) {
           socket.join(chatId);
