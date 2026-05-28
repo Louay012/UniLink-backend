@@ -82,10 +82,24 @@ async function deleteChat(req, res) {
   }
 }
 
+async function toggleArchive(req, res) {
+  if (!ensureAuthenticated(req, res)) return;
+
+  const isArchived = Boolean(req.body.isArchived);
+  try {
+    const result = await chatService.toggleArchiveChat(req.user, req.params.chatId, isArchived);
+    return res.status(result.status).json(result.body);
+  } catch (err) {
+    console.error('[controller] toggleArchive failed', err);
+    return res.status(500).json({ message: 'Failed to update archive status.' });
+  }
+}
+
 module.exports = {
   getMessagingContacts,
   getChats,
   createDirectGroup,
   markChatRead,
-  deleteChat
+  deleteChat,
+  toggleArchive
 };

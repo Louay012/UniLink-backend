@@ -14,7 +14,18 @@ async function resolveActor(user) {
     try {
       const res = await pool.query(
         `SELECT u.id, u.first_name, u.last_name,
-                (SELECT r.code FROM user_roles ur JOIN roles r ON r.id = ur.role_id WHERE ur.user_id = u.id LIMIT 1) AS role,
+                (SELECT r.code
+                 FROM user_roles ur
+                 JOIN roles r ON r.id = ur.role_id
+                 WHERE ur.user_id = u.id
+                 ORDER BY CASE r.code
+                   WHEN 'ADMIN' THEN 1
+                   WHEN 'COORDINATOR' THEN 2
+                   WHEN 'TEACHER' THEN 3
+                   WHEN 'STUDENT' THEN 4
+                   ELSE 5
+                 END
+                 LIMIT 1) AS role,
                 sp.class_group_id, cg.code AS class_group_code
          FROM users u
          LEFT JOIN student_profiles sp ON sp.user_id = u.id
@@ -46,7 +57,18 @@ async function getUserById(userId) {
   try {
     const res = await pool.query(
       `SELECT u.id, u.first_name, u.last_name, u.email,
-              (SELECT r.code FROM user_roles ur JOIN roles r ON r.id = ur.role_id WHERE ur.user_id = u.id LIMIT 1) AS role,
+              (SELECT r.code
+               FROM user_roles ur
+               JOIN roles r ON r.id = ur.role_id
+               WHERE ur.user_id = u.id
+               ORDER BY CASE r.code
+                 WHEN 'ADMIN' THEN 1
+                 WHEN 'COORDINATOR' THEN 2
+                 WHEN 'TEACHER' THEN 3
+                 WHEN 'STUDENT' THEN 4
+                 ELSE 5
+               END
+               LIMIT 1) AS role,
               sp.class_group_id, cg.code AS class_group_code
        FROM users u
        LEFT JOIN student_profiles sp ON sp.user_id = u.id
@@ -122,6 +144,10 @@ async function canDirectMessage(sender, target) {
   }
 
   if (senderRole === 'STUDENT') {
+    if (targetRole === 'STUDENT') {
+      return true;
+    }
+
     if (targetRole === 'TEACHER') {
       return studentCanMessageTeacher(sender, target);
     }
@@ -131,6 +157,10 @@ async function canDirectMessage(sender, target) {
     }
 
     return false;
+  }
+
+  if (senderRole === 'TEACHER' && targetRole === 'STUDENT') {
+    return true;
   }
 
   if (targetRole === 'STUDENT' && senderRole === 'TEACHER') {
@@ -160,7 +190,18 @@ async function formatChatForUser(chat, userId) {
   try {
     const memberRes = await pool.query(
       `SELECT u.id, u.first_name, u.last_name,
-              (SELECT r.code FROM user_roles ur JOIN roles r ON r.id = ur.role_id WHERE ur.user_id = u.id LIMIT 1) AS role
+              (SELECT r.code
+               FROM user_roles ur
+               JOIN roles r ON r.id = ur.role_id
+               WHERE ur.user_id = u.id
+               ORDER BY CASE r.code
+                 WHEN 'ADMIN' THEN 1
+                 WHEN 'COORDINATOR' THEN 2
+                 WHEN 'TEACHER' THEN 3
+                 WHEN 'STUDENT' THEN 4
+                 ELSE 5
+               END
+               LIMIT 1) AS role
        FROM chat_members cm JOIN users u ON u.id = cm.user_id WHERE cm.chat_id::text = $1`,
       [String(chat.id)]
     );
@@ -231,7 +272,18 @@ async function listAllowedContacts(user) {
   try {
     const res = await pool.query(
       `SELECT u.id, u.first_name, u.last_name, u.email,
-              (SELECT r.code FROM user_roles ur JOIN roles r ON r.id = ur.role_id WHERE ur.user_id = u.id LIMIT 1) AS role,
+              (SELECT r.code
+               FROM user_roles ur
+               JOIN roles r ON r.id = ur.role_id
+               WHERE ur.user_id = u.id
+               ORDER BY CASE r.code
+                 WHEN 'ADMIN' THEN 1
+                 WHEN 'COORDINATOR' THEN 2
+                 WHEN 'TEACHER' THEN 3
+                 WHEN 'STUDENT' THEN 4
+                 ELSE 5
+               END
+               LIMIT 1) AS role,
               sp.class_group_id, cg.code AS class_group_code
        FROM users u
        LEFT JOIN student_profiles sp ON sp.user_id = u.id
@@ -275,7 +327,7 @@ async function listUserChats(user, courseId) {
       params.push(String(courseId));
     }
 
-    const q = `SELECT c.id, c.chat_type, c.name, c.class_group_id, c.course_id, c.created_by_user_id
+    const q = `SELECT c.id, c.chat_type, c.name, c.class_group_id, c.course_id, c.created_by_user_id, cm.is_archived
                FROM chats c JOIN chat_members cm ON cm.chat_id = c.id
                WHERE cm.user_id::text = $1 ${courseFilter}`;
 
@@ -285,6 +337,7 @@ async function listUserChats(user, courseId) {
     const formatted = [];
     for (const row of rows) {
       const f = await formatChatForUser(row, actor.id);
+      f.isArchived = row.is_archived || false;
       formatted.push(f);
     }
 
@@ -501,6 +554,24 @@ async function submitFeedback(user, category, subject, details) {
   }
 }
 
+async function toggleArchiveChat(user, chatId, isArchived) {
+  const actor = await resolveActor(user);
+  if (!actor) return { status: 403, body: { message: "Unable to resolve user context." } };
+
+  if (!chatId) return { status: 400, body: { message: "Chat ID is required." } };
+
+  try {
+    await pool.query(
+      `UPDATE chat_members SET is_archived = $1 WHERE chat_id::text = $2 AND user_id::text = $3`,
+      [isArchived, String(chatId), String(actor.id)]
+    );
+    return { status: 200, body: { message: "Archive status updated." } };
+  } catch (e) {
+    console.error('[chat] toggleArchiveChat failed', e.message);
+    return { status: 500, body: { message: "Failed to update archive status." } };
+  }
+}
+
 module.exports = {
   getUserById,
   canAccessChat,
@@ -513,5 +584,6 @@ module.exports = {
   canDirectMessage,
   markChatRead,
   deleteChat,
-  submitFeedback
+  submitFeedback,
+  toggleArchiveChat
 };

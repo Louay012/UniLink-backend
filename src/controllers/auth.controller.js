@@ -35,15 +35,9 @@ function me(req, res) {
 async function searchUsers(req, res) {
   try {
     const q = String(req.query.q || "").trim().toLowerCase();
-    const allowedContacts = await groupService.listAllowedContacts(req.user);
-    const users = allowedContacts
-      .filter((contact) => {
-        if (!q) return true;
-        const haystack = `${contact.name || ""} ${contact.email || ""} ${contact.role || ""}`.toLowerCase();
-        return haystack.includes(q);
-      })
-      .slice(0, 20);
-    res.json(users);
+    const actor = await groupService.resolveActor(req.user);
+    const items = await authService.searchUsers(q);
+    res.json({ user: req.user, actorUserId: actor?.id || null, items });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
