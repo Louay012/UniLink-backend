@@ -51,10 +51,13 @@ async function recordAdminAuditLog(actor, action, targetType, targetId, metadata
 async function getAllUsers() {
   const result = await pool.query(
     `SELECT u.id, u.first_name, u.last_name, u.email, u.status,
-            u.created_at, r.code AS role
+            u.created_at, r.code AS role, 
+            cg.code
      FROM users u
      LEFT JOIN user_roles ur ON ur.user_id = u.id
      LEFT JOIN roles r       ON r.id = ur.role_id
+     LEFT JOIN student_profiles sp ON sp.user_id = u.id
+	   LEFT JOIN class_groups cg on sp.class_group_id = cg.id
      ORDER BY u.created_at DESC`
   );
   return result.rows;
