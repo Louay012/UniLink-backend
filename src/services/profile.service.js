@@ -110,6 +110,27 @@ async function getProfile(user) {
       };
     }
 
+    // Try to get coordinator info (class groups supervised)
+    let coordinatorProfile = null;
+    const coordinatorResult = await pool.query(
+      `SELECT cg.id, cg.code, cg.name, d.code AS department_code, d.name AS department_name
+       FROM class_groups cg
+       LEFT JOIN departments d ON d.id = cg.department_id
+       WHERE cg.coordinator_user_id::text = $1`,
+      [user.id]
+    );
+
+    if (coordinatorResult.rows.length) {
+      coordinatorProfile = {
+        supervisedGroups: coordinatorResult.rows.map((r) => ({
+          id: r.id,
+          code: r.code,
+          name: r.name,
+          department: { code: r.department_code, name: r.department_name }
+        }))
+      };
+    }
+
     // Get enrolled courses count
     let courseCount = 0;
     if (studentProfile) {
@@ -135,6 +156,7 @@ async function getProfile(user) {
         roles,
         studentProfile,
         teacherProfile,
+        coordinatorProfile,
         courseCount
       }
     };

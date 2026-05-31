@@ -22,8 +22,11 @@ router.patch("/admin/users/:id/class-group", adminController.assignUserClassGrou
 router.patch("/admin/courses/:id/class-group", adminController.assignCourseClassGroup);
 router.post("/admin/users/:id/courses", adminController.assignCourse);
 router.get("/admin/users/:id",       adminController.getUserById);
+router.get("/admin/users/:id/details", adminController.getUserDetails);
+router.patch("/admin/users/:id",    adminController.updateUser);
 router.post("/admin/users",          adminController.createUser);
 router.patch("/admin/users/:id/role",adminController.updateUserRole);
+router.patch("/admin/users/:id/teacher", adminController.updateTeacherProfile);
 router.delete("/admin/users/:id",    adminController.deleteUser);
 router.get('/admin/stats', adminController.getStats);
 router.post('/admin/bulk', upload.single('file'), bulkCreateUsers);

@@ -172,6 +172,212 @@ async function updateUserRole(id, newRole, actor = null) {
   return updatedUser;
 }
 
+// ─── UPDATE USER INFO (by admin) ─────────────────────────────────────────
+async function updateUser(id, updates = {}, actor = null) {
+  const previousUser = await getUserById(id);
+
+  // Allowed updatable fields
+  const allowed = ['firstName', 'lastName', 'email', 'phone', 'status'];
+  const setClauses = [];
+  const params = [];
+  let idx = 1;
+
+  // Map incoming camelCase to DB columns
+  const mapping = {
+    firstName: 'first_name',
+    lastName: 'last_name',
+    email: 'email',
+    phone: 'phone',
+    status: 'status'
+  };
+
+  for (const key of allowed) {
+    if (Object.prototype.hasOwnProperty.call(updates, key)) {
+      const col = mapping[key];
+      setClauses.push(`${col} = $${idx}`);
+      params.push(updates[key] === '' ? null : updates[key]);
+      idx += 1;
+    }
+  }
+
+  if (!setClauses.length) {
+    // Nothing to update — return existing
+    return previousUser;
+  }
+
+  // If email is being changed, check uniqueness
+  if (Object.prototype.hasOwnProperty.call(updates, 'email') && updates.email) {
+    const exists = await pool.query(`SELECT id FROM users WHERE lower(email) = lower($1) AND id::text <> $2 LIMIT 1`, [String(updates.email), String(id)]);
+    if (exists.rows.length) throw new Error('Email already in use by another account');
+  }
+
+  const query = `UPDATE users SET ${setClauses.join(', ')}, updated_at = NOW() WHERE id = $${idx} RETURNING id, first_name, last_name, email, phone, status, created_at`;
+  params.push(String(id));
+
+  const result = await pool.query(query, params);
+  if (!result.rows.length) throw new Error('User not found');
+  const row = result.rows[0];
+
+  await recordAdminAuditLog(actor, 'ADMIN_USER_UPDATED', 'user', id, {
+    previous: previousUser,
+    updates: updates
+  });
+
+  return {
+    id: row.id,
+    first_name: row.first_name,
+    last_name: row.last_name,
+    email: row.email,
+    phone: row.phone,
+    status: row.status,
+    created_at: row.created_at
+  };
+}
+
+// ─── GET USER DETAILS (admin) ─────────────────────────────────────────────
+async function getUserDetails(id) {
+  // basic user
+  const userRes = await pool.query(
+    `SELECT u.id, u.first_name, u.last_name, u.email, u.phone, u.status, u.created_at
+     FROM users u WHERE u.id::text = $1 LIMIT 1`,
+    [String(id)]
+  );
+  if (!userRes.rows.length) throw new Error('User not found');
+  const row = userRes.rows[0];
+
+  // roles
+  const rolesRes = await pool.query(
+    `SELECT r.code, r.label
+     FROM user_roles ur JOIN roles r ON r.id = ur.role_id
+     WHERE ur.user_id::text = $1`,
+    [String(id)]
+  );
+  const roles = (rolesRes.rows || []).map(r => r.code);
+
+  // student profile
+  const spRes = await pool.query(
+    `SELECT sp.student_number, sp.enrollment_status, sp.enrollment_year, sp.program_name,
+            cg.id AS class_group_id, cg.code AS class_group_code, cg.name AS class_group_name,
+            d.code AS department_code, d.name AS department_name,
+            l.code AS level_code, l.name AS level_name
+     FROM student_profiles sp
+     LEFT JOIN class_groups cg ON cg.id = sp.class_group_id
+     LEFT JOIN departments d ON d.id = cg.department_id
+     LEFT JOIN levels l ON l.id = cg.level_id
+     WHERE sp.user_id::text = $1 LIMIT 1`,
+    [String(id)]
+  );
+  const studentProfile = spRes.rows[0] ? {
+    studentNumber: spRes.rows[0].student_number,
+    enrollmentStatus: spRes.rows[0].enrollment_status,
+    enrollmentYear: spRes.rows[0].enrollment_year,
+    programName: spRes.rows[0].program_name,
+    classGroup: spRes.rows[0].class_group_id ? { id: spRes.rows[0].class_group_id, code: spRes.rows[0].class_group_code, name: spRes.rows[0].class_group_name } : null,
+    department: spRes.rows[0].department_code ? { code: spRes.rows[0].department_code, name: spRes.rows[0].department_name } : null,
+    level: spRes.rows[0].level_code ? { code: spRes.rows[0].level_code, name: spRes.rows[0].level_name } : null
+  } : null;
+
+  // teacher profile
+  const tpRes = await pool.query(
+    `SELECT employee_code, professional_grade, employment_status, academic_rank, hire_date, office_location, office_hours, bio
+     FROM teacher_profiles WHERE user_id::text = $1 LIMIT 1`,
+    [String(id)]
+  );
+  const teacherProfile = tpRes.rows[0] ? {
+    employeeCode: tpRes.rows[0].employee_code,
+    professionalGrade: tpRes.rows[0].professional_grade,
+    employmentStatus: tpRes.rows[0].employment_status,
+    academicRank: tpRes.rows[0].academic_rank,
+    hireDate: tpRes.rows[0].hire_date,
+    officeLocation: tpRes.rows[0].office_location,
+    officeHours: tpRes.rows[0].office_hours,
+    bio: tpRes.rows[0].bio
+  } : null;
+
+  // coordinator: supervised groups
+  const coordRes = await pool.query(
+    `SELECT cg.id, cg.code, cg.name, d.code AS department_code, d.name AS department_name
+     FROM class_groups cg
+     LEFT JOIN departments d ON d.id = cg.department_id
+     WHERE cg.coordinator_user_id::text = $1`,
+    [String(id)]
+  );
+  const coordinatorProfile = coordRes.rows.length ? { supervisedGroups: coordRes.rows.map(r => ({ id: r.id, code: r.code, name: r.name, department: { code: r.department_code, name: r.department_name } })) } : null;
+
+  return {
+    id: row.id,
+    firstName: row.first_name,
+    lastName: row.last_name,
+    email: row.email,
+    phone: row.phone,
+    status: row.status,
+    createdAt: row.created_at,
+    roles,
+    studentProfile,
+    teacherProfile,
+    coordinatorProfile
+  };
+}
+
+// ─── UPDATE TEACHER PROFILE (admin) ───────────────────────────────────────
+async function updateTeacherProfile(id, payload = {}, actor = null) {
+  // ensure user exists
+  await getUserById(id);
+
+  const fields = ['employeeCode','professionalGrade','employmentStatus','academicRank','hireDate','officeLocation','officeHours','bio'];
+  const mapping = {
+    employeeCode: 'employee_code',
+    professionalGrade: 'professional_grade',
+    employmentStatus: 'employment_status',
+    academicRank: 'academic_rank',
+    hireDate: 'hire_date',
+    officeLocation: 'office_location',
+    officeHours: 'office_hours',
+    bio: 'bio'
+  };
+
+  // Check if teacher profile exists
+  const exists = await pool.query(`SELECT user_id FROM teacher_profiles WHERE user_id::text = $1 LIMIT 1`, [String(id)]);
+  if (exists.rows.length) {
+    const setClauses = [];
+    const params = [];
+    let idx = 1;
+    for (const k of fields) {
+      if (Object.prototype.hasOwnProperty.call(payload, k)) {
+        // Treat empty-string as "not provided" so DB defaults (NOT NULL defaults) apply
+        if (payload[k] === '') continue;
+        setClauses.push(`${mapping[k]} = $${idx}`);
+        params.push(payload[k]);
+        idx += 1;
+      }
+    }
+    if (!setClauses.length) return { message: 'No changes' };
+    const query = `UPDATE teacher_profiles SET ${setClauses.join(', ')}, updated_at = NOW() WHERE user_id::text = $${idx} RETURNING *`;
+    params.push(String(id));
+    const res = await pool.query(query, params);
+    await recordAdminAuditLog(actor, 'ADMIN_TEACHER_PROFILE_UPDATED', 'user', id, { updates: payload });
+    return res.rows[0];
+  }
+
+  // insert new
+  const cols = [];
+  const vals = [];
+  const params = [];
+  let i = 1;
+  cols.push('user_id'); vals.push(`$${i}`); params.push(String(id)); i += 1;
+  for (const k of fields) {
+    if (Object.prototype.hasOwnProperty.call(payload, k)) {
+      // Skip empty strings so database defaults (NOT NULL DEFAULT ...) are used
+      if (payload[k] === '') continue;
+      cols.push(mapping[k]); vals.push(`$${i}`); params.push(payload[k]); i += 1;
+    }
+  }
+  const q = `INSERT INTO teacher_profiles (${cols.join(',')}) VALUES (${vals.join(',')}) RETURNING *`;
+  const r = await pool.query(q, params);
+  await recordAdminAuditLog(actor, 'ADMIN_TEACHER_PROFILE_CREATED', 'user', id, { created: true });
+  return r.rows[0];
+}
+
 // ─── DELETE USER ──────────────────────────────────────────────────────────────
 async function deleteUser(id, actor = null) {
   const user = await getUserById(id);
@@ -570,4 +776,7 @@ module.exports = {
   assignUserToClassGroup,
   assignCourseToClassGroup,
   getDashboardStats
+  ,updateUser,
+  getUserDetails,
+  updateTeacherProfile
 };

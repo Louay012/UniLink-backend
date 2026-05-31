@@ -54,6 +54,33 @@ async function deleteUser(req, res) {
   }
 }
 
+async function updateUser(req, res) {
+  try {
+    const user = await adminService.updateUser(req.params.id, req.body || {}, req.user);
+    res.json(user);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+}
+
+async function getUserDetails(req, res) {
+  try {
+    const details = await adminService.getUserDetails(req.params.id);
+    res.json(details);
+  } catch (err) {
+    res.status(404).json({ error: err.message });
+  }
+}
+
+async function updateTeacherProfile(req, res) {
+  try {
+    const result = await adminService.updateTeacherProfile(req.params.id, req.body || {}, req.user);
+    res.json(result);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+}
+
 async function assignCourse(req, res) {
   const userId = req.params.id;
   const { courseId } = req.body || {};
@@ -185,6 +212,7 @@ module.exports = {
   getAuditLogs,
   getUserById,
   createUser,
+  updateUser,
   updateUserRole,
   deleteUser,
   getAllCourses,
@@ -195,6 +223,8 @@ module.exports = {
   createClassGroup,
   assignUserClassGroup,
   assignCourseClassGroup,
+  getUserDetails,
+  updateTeacherProfile,
   assignCourse,
   getStats,
   getAllCoursesinfo
