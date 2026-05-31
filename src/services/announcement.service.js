@@ -154,9 +154,13 @@ async function emitAnnouncementNotifications(announcement, targets) {
   }
 }
 
-async function getAudienceForUser(actor) {
+async function getAudienceForUser(actor, user = null) {
   const audience = { departmentIds: new Set(), classGroupIds: new Set() };
   if (!actor?.id) return audience;
+  const roles = new Set([
+    String(actor.role || "").toUpperCase(),
+    ...((Array.isArray(user?.roles) ? user.roles : []).map((role) => String(role).toUpperCase()))
+  ].filter(Boolean));
 
   if (actor.role === "ADMIN") {
     return audience;
@@ -171,7 +175,7 @@ async function getAudienceForUser(actor) {
     if (dept.rows[0]?.department_id) audience.departmentIds.add(String(dept.rows[0].department_id));
   }
 
-  if (actor.role === "COORDINATOR") {
+  if (roles.has("COORDINATOR")) {
     const res = await pool.query(
       `SELECT id, department_id FROM class_groups WHERE coordinator_user_id::text = $1`,
       [String(actor.id)]
@@ -182,20 +186,18 @@ async function getAudienceForUser(actor) {
     }
   }
 
-  if (actor.role === "TEACHER") {
-    const res = await pool.query(
-      `SELECT DISTINCT c.class_group_id, cg.department_id
-       FROM course_teachers ct
-       JOIN courses c ON c.id = ct.course_id
-       JOIN class_groups cg ON cg.id = c.class_group_id
-       WHERE ct.user_id::text = $1
-         AND (ct.unassigned_at IS NULL OR ct.unassigned_at >= NOW())`,
-      [String(actor.id)]
-    );
-    for (const row of res.rows || []) {
-      if (row.class_group_id) audience.classGroupIds.add(String(row.class_group_id));
-      if (row.department_id) audience.departmentIds.add(String(row.department_id));
-    }
+  const taught = await pool.query(
+    `SELECT DISTINCT c.class_group_id, cg.department_id
+     FROM course_teachers ct
+     JOIN courses c ON c.id = ct.course_id
+     JOIN class_groups cg ON cg.id = c.class_group_id
+     WHERE ct.user_id::text = $1
+       AND (ct.unassigned_at IS NULL OR ct.unassigned_at >= NOW())`,
+    [String(actor.id)]
+  );
+  for (const row of taught.rows || []) {
+    if (row.class_group_id) audience.classGroupIds.add(String(row.class_group_id));
+    if (row.department_id) audience.departmentIds.add(String(row.department_id));
   }
 
   return audience;
@@ -283,19 +285,27 @@ async function validateTargets(actor, payload) {
   }
 
   if (actor.role === "COORDINATOR") {
-    if (departmentIds.length) {
-      return { ok: false, status: 403, message: "Coordinators can only target supervised sections." };
-    }
     const allowed = await pool.query(
       `SELECT id FROM class_groups WHERE coordinator_user_id::text = $1`,
       [String(actor.id)]
     );
     const allowedIds = new Set((allowed.rows || []).map((row) => String(row.id)));
-    const outside = classGroupIds.some((id) => !allowedIds.has(id));
+    const resolvedClassGroupIds = classGroupIds.length
+      ? classGroupIds
+      : allowedIds.size === 1
+        ? [...allowedIds]
+        : [];
+    if (departmentIds.length) {
+      return { ok: false, status: 403, message: "Coordinators can only target supervised sections." };
+    }
+    if (!resolvedClassGroupIds.length) {
+      return { ok: false, status: 400, message: "Choose at least one supervised section." };
+    }
+    const outside = resolvedClassGroupIds.some((id) => !allowedIds.has(id));
     if (outside) {
       return { ok: false, status: 403, message: "You can only target sections you supervise." };
     }
-    return { ok: true, departmentIds: [], classGroupIds };
+    return { ok: true, departmentIds: [], classGroupIds: resolvedClassGroupIds };
   }
 
   return { ok: false, status: 403, message: "Only admins and coordinators can publish global announcements." };
@@ -340,7 +350,7 @@ async function listVisibleAnnouncements(user) {
   let where = `WHERE a.scope = 'GLOBAL' AND a.status = 'PUBLISHED'`;
 
   if (actor.role !== "ADMIN") {
-    const audience = await getAudienceForUser(actor);
+    const audience = await getAudienceForUser(actor, user);
     const departmentIds = [...audience.departmentIds];
     const classGroupIds = [...audience.classGroupIds];
     params.push(departmentIds, classGroupIds);
