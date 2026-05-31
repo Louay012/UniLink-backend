@@ -47,6 +47,130 @@ async function recordAdminAuditLog(actor, action, targetType, targetId, metadata
   }
 }
 
+async function resolveChatActorUserId(actor = null) {
+  const actorId = getActorUserId(actor);
+  if (actorId) return String(actorId);
+
+  // Fallback to any admin user, then any user, to satisfy chats.created_by_user_id NOT NULL
+  const adminRes = await pool.query(
+    `SELECT u.id
+     FROM users u
+     JOIN user_roles ur ON ur.user_id = u.id
+     JOIN roles r ON r.id = ur.role_id
+     WHERE r.code = 'ADMIN'
+     ORDER BY u.created_at ASC
+     LIMIT 1`
+  );
+  if (adminRes.rows.length) return String(adminRes.rows[0].id);
+
+  const anyRes = await pool.query(`SELECT id FROM users ORDER BY created_at ASC LIMIT 1`);
+  if (anyRes.rows.length) return String(anyRes.rows[0].id);
+
+  throw new Error('No users available to create class group chat');
+}
+
+async function ensureGeneralClassChat(classGroupId, actor = null) {
+  const groupRes = await pool.query(
+    `SELECT id, code, name FROM class_groups WHERE id::text = $1 LIMIT 1`,
+    [String(classGroupId)]
+  );
+  if (!groupRes.rows.length) throw new Error('Class group not found');
+  const group = groupRes.rows[0];
+
+  const existing = await pool.query(
+    `SELECT id
+     FROM chats
+     WHERE chat_type = 'GENERAL_CLASS' AND class_group_id::text = $1
+     ORDER BY created_at ASC
+     LIMIT 1`,
+    [String(classGroupId)]
+  );
+  if (existing.rows.length) return String(existing.rows[0].id);
+
+  const createdByUserId = await resolveChatActorUserId(actor);
+  const created = await pool.query(
+    `INSERT INTO chats (chat_type, name, class_group_id, course_id, created_by_user_id)
+     VALUES ('GENERAL_CLASS', $1, $2::uuid, NULL, $3::uuid)
+     RETURNING id`,
+    [`${group.code} — ${group.name}`, String(classGroupId), createdByUserId]
+  );
+
+  return String(created.rows[0].id);
+}
+
+async function collectClassChatMemberIds(classGroupId, includeStaff = true) {
+  const studentRes = await pool.query(
+    `SELECT sp.user_id
+     FROM student_profiles sp
+     JOIN user_roles ur ON ur.user_id = sp.user_id
+     JOIN roles r ON r.id = ur.role_id
+     WHERE sp.class_group_id::text = $1 AND r.code = 'STUDENT'`,
+    [String(classGroupId)]
+  );
+
+  const memberIds = new Set((studentRes.rows || []).map((r) => String(r.user_id)));
+  if (!includeStaff) return memberIds;
+
+  const staffRes = await pool.query(
+    `SELECT DISTINCT u.id
+     FROM users u
+     WHERE u.id IN (
+       SELECT cg.coordinator_user_id
+       FROM class_groups cg
+       WHERE cg.id::text = $1 AND cg.coordinator_user_id IS NOT NULL
+       UNION
+       SELECT ct.user_id
+       FROM courses c
+       JOIN course_teachers ct ON ct.course_id = c.id
+       WHERE c.class_group_id::text = $1
+     )`,
+    [String(classGroupId)]
+  );
+
+  for (const row of (staffRes.rows || [])) {
+    memberIds.add(String(row.id));
+  }
+  return memberIds;
+}
+
+async function syncClassGroupChatMembers(classGroupId, actor = null, options = {}) {
+  const includeStaff = options.includeStaff !== false;
+  const chatId = await ensureGeneralClassChat(classGroupId, actor);
+  const memberIds = await collectClassChatMemberIds(classGroupId, includeStaff);
+  const addedByUserId = await resolveChatActorUserId(actor);
+
+  for (const userId of memberIds) {
+    await pool.query(
+      `INSERT INTO chat_members (chat_id, user_id, added_by_user_id)
+       VALUES ($1::uuid, $2::uuid, $3::uuid)
+       ON CONFLICT (chat_id, user_id)
+       DO UPDATE SET is_archived = FALSE`,
+      [String(chatId), String(userId), String(addedByUserId)]
+    );
+  }
+
+  return chatId;
+}
+
+async function removeUserFromClassGroupChat(classGroupId, userId) {
+  if (!classGroupId || !userId) return;
+
+  const chatRes = await pool.query(
+    `SELECT id
+     FROM chats
+     WHERE chat_type = 'GENERAL_CLASS' AND class_group_id::text = $1
+     ORDER BY created_at ASC
+     LIMIT 1`,
+    [String(classGroupId)]
+  );
+  if (!chatRes.rows.length) return;
+
+  await pool.query(
+    `DELETE FROM chat_members WHERE chat_id::text = $1 AND user_id::text = $2`,
+    [String(chatRes.rows[0].id), String(userId)]
+  );
+}
+
 // ─── GET ALL USERS ────────────────────────────────────────────────────────────
 async function getAllUsers() {
   const result = await pool.query(
@@ -420,6 +544,9 @@ async function assignCourseToUser(userId, courseId, actor = null) {
       String(courseId),
       String(userId)
     ]);
+    if (course.class_group_id) {
+      await syncClassGroupChatMembers(course.class_group_id, actor, { includeStaff: true });
+    }
     await recordAdminAuditLog(actor, "ADMIN_COURSE_ASSIGNED", "course", course.id, {
       userId,
       courseId,
@@ -434,14 +561,19 @@ async function assignCourseToUser(userId, courseId, actor = null) {
     if (!classGroupId) throw new Error("Course has no class group");
 
     const sp = await pool.query(
-      `SELECT user_id FROM student_profiles WHERE user_id::text = $1 LIMIT 1`,
+      `SELECT user_id, class_group_id FROM student_profiles WHERE user_id::text = $1 LIMIT 1`,
       [String(userId)]
     );
     if (sp.rows && sp.rows.length) {
+      const previousClassGroupId = sp.rows[0].class_group_id;
       await pool.query(
         `UPDATE student_profiles SET class_group_id = $1 WHERE user_id::text = $2`,
         [String(classGroupId), String(userId)]
       );
+      if (previousClassGroupId && String(previousClassGroupId) !== String(classGroupId)) {
+        await removeUserFromClassGroupChat(previousClassGroupId, userId);
+      }
+      await syncClassGroupChatMembers(classGroupId, actor, { includeStaff: true });
       await recordAdminAuditLog(actor, "ADMIN_COURSE_ASSIGNED", "course", course.id, {
         userId,
         courseId,
@@ -456,6 +588,7 @@ async function assignCourseToUser(userId, courseId, actor = null) {
       `INSERT INTO student_profiles (user_id, class_group_id) VALUES ($1::uuid, $2::uuid)`,
       [String(userId), String(classGroupId)]
     );
+    await syncClassGroupChatMembers(classGroupId, actor, { includeStaff: true });
     await recordAdminAuditLog(actor, "ADMIN_COURSE_ASSIGNED", "course", course.id, {
       userId,
       courseId,
@@ -507,9 +640,9 @@ async function getAllClassGroups() {
   }));
 }
 
-async function createClassGroup({ code, name, departmentId, coordinatorUserId }, actor = null) {
-  if (!code || !name || !departmentId ) {
-    throw new Error("code, name, departmentId and coordinatorUserId are required");
+async function createClassGroup({ code, name, departmentId, levelId, coordinatorUserId }, actor = null) {
+  if (!code || !name || !departmentId) {
+    throw new Error("code, name and departmentId are required");
   }
 
   const normalizedCode = String(code).trim().toUpperCase();
@@ -518,6 +651,27 @@ async function createClassGroup({ code, name, departmentId, coordinatorUserId },
   const dept = await pool.query(`SELECT id FROM departments WHERE id::text = $1 LIMIT 1`, [String(departmentId)]);
   if (!dept.rows.length) throw new Error("Invalid departmentId");
 
+  // Resolve levelId: use provided value, otherwise try to infer a sensible default.
+  let resolvedLevelId = levelId ? String(levelId) : null;
+  if (!resolvedLevelId) {
+    // Prefer a level with code 'L1' if it exists
+    const prefer = await pool.query(`SELECT id FROM levels WHERE code = 'L1' LIMIT 1`);
+    if (prefer.rows.length) {
+      resolvedLevelId = prefer.rows[0].id;
+    } else {
+      // Fallback to any existing level (ordered by code)
+      const any = await pool.query(`SELECT id FROM levels ORDER BY code LIMIT 1`);
+      if (any.rows.length) {
+        resolvedLevelId = any.rows[0].id;
+      } else {
+        throw new Error("No levels found in database; create a level or supply levelId");
+      }
+    }
+  }
+
+  const lvl = await pool.query(`SELECT id FROM levels WHERE id::text = $1 LIMIT 1`, [String(resolvedLevelId)]);
+  if (!lvl.rows.length) throw new Error("Invalid levelId");
+
 
 
 
@@ -525,17 +679,19 @@ async function createClassGroup({ code, name, departmentId, coordinatorUserId },
   if (exists.rows.length) throw new Error("Class group code already exists");
 
   const insert = await pool.query(
-    `INSERT INTO class_groups (code, name, department_id, coordinator_user_id)
-     VALUES ($1, $2, $3::uuid, $4::uuid)
-     RETURNING id, code, name, department_id, coordinator_user_id`,
-    [normalizedCode, normalizedName, String(departmentId), coordinatorUserId ? String(coordinatorUserId) : null]
+    `INSERT INTO class_groups (code, name, department_id, level_id, coordinator_user_id)
+     VALUES ($1, $2, $3::uuid, $4::uuid, $5::uuid)
+     RETURNING id, code, name, department_id, level_id, coordinator_user_id`,
+    [normalizedCode, normalizedName, String(departmentId), String(resolvedLevelId), coordinatorUserId ? String(coordinatorUserId) : null]
   );
 
   const row = insert.rows[0];
+  await syncClassGroupChatMembers(row.id, actor, { includeStaff: true });
   await recordAdminAuditLog(actor, "ADMIN_CLASS_GROUP_CREATED", "class_group", row.id, {
     code: row.code,
     name: row.name,
-    departmentId: row.department_id,  
+    departmentId: row.department_id,
+    levelId: row.level_id,
     coordinatorUserId: row.coordinator_user_id
   });
   return {
@@ -543,6 +699,7 @@ async function createClassGroup({ code, name, departmentId, coordinatorUserId },
     code: row.code,
     name: row.name,
     departmentId: row.department_id,
+    levelId: row.level_id,
     coordinatorUserId: row.coordinator_user_id
   };
 }
@@ -590,6 +747,7 @@ async function createCourse({ code, title, description = '', classGroupId, isCou
        ON CONFLICT (course_id, user_id) DO NOTHING`,
       [String(row.id), String(teacherUserId)]
     );
+    await syncClassGroupChatMembers(classGroupId, actor, { includeStaff: true });
   }
 
   await recordAdminAuditLog(actor, "ADMIN_COURSE_CREATED", "course", row.id, {
@@ -625,7 +783,13 @@ async function assignUserToClassGroup(userId, classGroupId, actor = null) {
 
   const profile = await pool.query(`SELECT user_id FROM student_profiles WHERE user_id::text = $1 LIMIT 1`, [String(userId)]);
   if (profile.rows.length) {
+    const oldProfile = await pool.query(`SELECT class_group_id FROM student_profiles WHERE user_id::text = $1 LIMIT 1`, [String(userId)]);
+    const previousClassGroupId = oldProfile.rows[0]?.class_group_id || null;
     await pool.query(`UPDATE student_profiles SET class_group_id = $1::uuid WHERE user_id::text = $2`, [String(classGroupId), String(userId)]);
+    if (previousClassGroupId && String(previousClassGroupId) !== String(classGroupId)) {
+      await removeUserFromClassGroupChat(previousClassGroupId, userId);
+    }
+    await syncClassGroupChatMembers(classGroupId, actor, { includeStaff: true });
     await recordAdminAuditLog(actor, "ADMIN_CLASS_GROUP_ASSIGNED", "class_group", classGroupId, {
       userId: String(userId),
       result: "student_class_group_updated"
@@ -634,6 +798,7 @@ async function assignUserToClassGroup(userId, classGroupId, actor = null) {
   }
 
   await pool.query(`INSERT INTO student_profiles (user_id, class_group_id) VALUES ($1::uuid, $2::uuid)`, [String(userId), String(classGroupId)]);
+  await syncClassGroupChatMembers(classGroupId, actor, { includeStaff: true });
   await recordAdminAuditLog(actor, "ADMIN_CLASS_GROUP_ASSIGNED", "class_group", classGroupId, {
     userId: String(userId),
     result: "student_profile_created"
@@ -652,7 +817,14 @@ async function assignCourseToClassGroup(courseId, classGroupId, actor = null) {
   const course = await pool.query(`SELECT id FROM courses WHERE id::text = $1 LIMIT 1`, [String(courseId)]);
   if (!course.rows.length) throw new Error('Course not found');
 
+  const prev = await pool.query(`SELECT class_group_id FROM courses WHERE id::text = $1 LIMIT 1`, [String(courseId)]);
+  const previousClassGroupId = prev.rows[0]?.class_group_id || null;
+
   await pool.query(`UPDATE courses SET class_group_id = $1::uuid, updated_at = NOW() WHERE id::text = $2`, [String(classGroupId), String(courseId)]);
+  await syncClassGroupChatMembers(classGroupId, actor, { includeStaff: true });
+  if (previousClassGroupId && String(previousClassGroupId) !== String(classGroupId)) {
+    await syncClassGroupChatMembers(previousClassGroupId, actor, { includeStaff: true });
+  }
   await recordAdminAuditLog(actor, "ADMIN_COURSE_CLASS_GROUP_ASSIGNED", "course", courseId, {
     classGroupId: String(classGroupId)
   });
