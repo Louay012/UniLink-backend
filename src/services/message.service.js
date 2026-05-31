@@ -671,6 +671,7 @@ async function createChatMessageWithAttachments(user, chatId, bodyOrPayload, att
           io.to(String(memberId)).emit("notification", {
             id: `msg-${newMessage.id}`,
             type: "message",
+            chatId: String(chat.id),
             title: notifTitle,
             subtitle: notifBody,
             timestamp: createdAt,

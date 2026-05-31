@@ -10,6 +10,18 @@ function ensureAuthenticated(req, res) {
   return false;
 }
 
+function normalizeAnnouncementPayload(body = {}) {
+  const departmentIds = body.departmentIds || body['departmentIds[]'] || [];
+  const classGroupIds = body.classGroupIds || body['classGroupIds[]'] || [];
+
+  return {
+    title: body.title,
+    body: body.body,
+    departmentIds: Array.isArray(departmentIds) ? departmentIds : departmentIds ? [departmentIds] : [],
+    classGroupIds: Array.isArray(classGroupIds) ? classGroupIds : classGroupIds ? [classGroupIds] : []
+  };
+}
+
 async function getCourses(req, res) {
   if (!ensureAuthenticated(req, res)) return;
 
@@ -45,6 +57,82 @@ async function getGlobalAnnouncements(req, res) {
   } catch (err) {
     console.error('[controller] getGlobalAnnouncements failed', err);
     return res.status(500).json({ message: 'Failed to load announcements.' });
+  }
+}
+
+async function getAnnouncementAudienceOptions(req, res) {
+  if (!ensureAuthenticated(req, res)) return;
+
+  try {
+    const options = await courseService.getAnnouncementAudienceOptions(req.user);
+    return res.json(options);
+  } catch (err) {
+    console.error('[controller] getAnnouncementAudienceOptions failed', err);
+    return res.status(500).json({ message: 'Failed to load audience options.' });
+  }
+}
+
+async function createGlobalAnnouncement(req, res) {
+  if (!ensureAuthenticated(req, res)) return;
+
+  const files = Array.isArray(req.files) ? req.files.map((f) => ({
+    fileName: f.originalname,
+    mimeType: f.mimetype,
+    fileSize: f.size,
+    content: f.buffer,
+    buffer: f.buffer
+  })) : [];
+
+  try {
+    const result = await courseService.createGlobalAnnouncement(req.user, normalizeAnnouncementPayload(req.body || {}), files);
+    return res.status(result.status).json(result.body);
+  } catch (err) {
+    console.error('[controller] createGlobalAnnouncement failed', err);
+    return res.status(500).json({ message: 'Failed to create announcement.' });
+  }
+}
+
+async function updateGlobalAnnouncement(req, res) {
+  if (!ensureAuthenticated(req, res)) return;
+
+  const files = Array.isArray(req.files) ? req.files.map((f) => ({
+    fileName: f.originalname,
+    mimeType: f.mimetype,
+    fileSize: f.size,
+    content: f.buffer,
+    buffer: f.buffer
+  })) : [];
+
+  try {
+    const result = await courseService.updateGlobalAnnouncement(req.user, req.params.announcementId, normalizeAnnouncementPayload(req.body || {}), files);
+    return res.status(result.status).json(result.body);
+  } catch (err) {
+    console.error('[controller] updateGlobalAnnouncement failed', err);
+    return res.status(500).json({ message: 'Failed to update announcement.' });
+  }
+}
+
+async function deleteGlobalAnnouncement(req, res) {
+  if (!ensureAuthenticated(req, res)) return;
+
+  try {
+    const result = await courseService.deleteGlobalAnnouncement(req.user, req.params.announcementId);
+    return res.status(result.status).json(result.body);
+  } catch (err) {
+    console.error('[controller] deleteGlobalAnnouncement failed', err);
+    return res.status(500).json({ message: 'Failed to delete announcement.' });
+  }
+}
+
+async function markGlobalAnnouncementRead(req, res) {
+  if (!ensureAuthenticated(req, res)) return;
+
+  try {
+    await courseService.markGlobalAnnouncementRead(req.user.id, req.params.announcementId);
+    return res.json({ success: true });
+  } catch (err) {
+    console.error('[controller] markGlobalAnnouncementRead failed', err);
+    return res.status(500).json({ message: 'Failed to mark announcement as read.' });
   }
 }
 
@@ -199,6 +287,11 @@ module.exports = {
   getCourses,
   getCourse,
   getGlobalAnnouncements,
+  getAnnouncementAudienceOptions,
+  createGlobalAnnouncement,
+  updateGlobalAnnouncement,
+  deleteGlobalAnnouncement,
+  markGlobalAnnouncementRead,
   getAnnouncements,
   postAnnouncement,
   postAnnouncementWithFiles,
