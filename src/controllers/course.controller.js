@@ -1,4 +1,5 @@
 const courseService = require("../services/course.service");
+const announcementService = require("../services/announcement.service");
 
 function ensureAuthenticated(req, res) {
   if (req.user) {
@@ -51,8 +52,8 @@ async function getGlobalAnnouncements(req, res) {
   if (!ensureAuthenticated(req, res)) return;
 
   try {
-    const items = await courseService.listVisibleAnnouncements(req.user);
-    return res.json({ items });
+    const result = await announcementService.listVisibleAnnouncements(req.user);
+    return res.status(result.status).json(result.body);
   } catch (err) {
     console.error('[controller] getGlobalAnnouncements failed', err);
     return res.status(500).json({ message: 'Failed to load announcements.' });

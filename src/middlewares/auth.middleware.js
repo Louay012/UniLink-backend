@@ -39,9 +39,17 @@ function attachResolvedUser(req, _res, next) {
       : decoded.role
         ? [String(decoded.role).toUpperCase()]
         : [];
+    const requestedRole = req.headers["x-unilink-role"]
+      ? String(req.headers["x-unilink-role"]).toUpperCase()
+      : null;
+    const resolvedRole = requestedRole && roles.includes(requestedRole)
+      ? requestedRole
+      : decoded.role
+        ? String(decoded.role).toUpperCase()
+        : roles[0] || null;
     req.user = {
       id: decoded.userId,
-      role: roles[0] || (decoded.role ? String(decoded.role).toUpperCase() : null),
+      role: resolvedRole,
       roles,
     };
     console.debug("[auth] Token verified. userId:", decoded.userId, "role:", decoded.role);

@@ -51,13 +51,22 @@ async function recordAdminAuditLog(actor, action, targetType, targetId, metadata
 async function getAllUsers() {
   const result = await pool.query(
     `SELECT u.id, u.first_name, u.last_name, u.email, u.status,
-            u.created_at, r.code AS role, 
+            u.created_at,
+            (ARRAY_AGG(r.code ORDER BY CASE r.code
+              WHEN 'ADMIN' THEN 1
+              WHEN 'COORDINATOR' THEN 2
+              WHEN 'TEACHER' THEN 3
+              WHEN 'STUDENT' THEN 4
+              ELSE 5
+            END))[1] AS role,
+            ARRAY_REMOVE(ARRAY_AGG(DISTINCT r.code), NULL) AS roles,
             cg.code
      FROM users u
      LEFT JOIN user_roles ur ON ur.user_id = u.id
      LEFT JOIN roles r       ON r.id = ur.role_id
      LEFT JOIN student_profiles sp ON sp.user_id = u.id
 	   LEFT JOIN class_groups cg on sp.class_group_id = cg.id
+     GROUP BY u.id, u.first_name, u.last_name, u.email, u.status, u.created_at, cg.code
      ORDER BY u.created_at DESC`
   );
   return result.rows;
@@ -148,8 +157,7 @@ async function updateUserRole(id, newRole, actor = null) {
   const roleRow = await pool.query("SELECT id FROM roles WHERE code = $1", [newRole]);
   if (roleRow.rows.length === 0) throw new Error("Invalid role");
 
-  await pool.query("DELETE FROM user_roles WHERE user_id = $1", [id]);
-  await pool.query(`INSERT INTO user_roles (user_id, role_id) VALUES ($1, $2)`, [
+  await pool.query(`INSERT INTO user_roles (user_id, role_id) VALUES ($1, $2) ON CONFLICT (user_id, role_id) DO NOTHING`, [
     id,
     roleRow.rows[0].id
   ]);

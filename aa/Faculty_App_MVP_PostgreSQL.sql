@@ -251,6 +251,7 @@ CREATE TABLE IF NOT EXISTS chat_members (
     role_in_chat chat_member_role_enum NOT NULL DEFAULT 'MEMBER',
     added_by_user_id UUID REFERENCES users(id) ON DELETE SET NULL,
     added_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    is_archived BOOLEAN NOT NULL DEFAULT FALSE,
     PRIMARY KEY (chat_id, user_id)
 );
 

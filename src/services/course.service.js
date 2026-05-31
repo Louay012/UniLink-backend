@@ -105,32 +105,45 @@ async function listVisibleCourses(user) {
 
   try {
     let rows = [];
+    const roles = new Set([
+      String(actor.role || '').toUpperCase(),
+      ...((Array.isArray(user?.roles) ? user.roles : []).map((role) => String(role).toUpperCase()))
+    ].filter(Boolean));
 
-    if (actor.role === 'TEACHER') {
+    if (roles.has('ADMIN')) {
       const res = await pool.query(
+        `SELECT c.id, c.code, c.title, c.description, c.class_group_id, cg.code AS class_group_code, c.is_course_chat_enabled, c.created_at, c.updated_at
+         FROM courses c JOIN class_groups cg ON cg.id = c.class_group_id ORDER BY c.title`);
+      rows = res.rows || [];
+    } else {
+      const queries = [];
+
+      queries.push(pool.query(
         `SELECT c.id, c.code, c.title, c.description, c.class_group_id, cg.code AS class_group_code, c.is_course_chat_enabled, c.created_at, c.updated_at
          FROM courses c
          JOIN class_groups cg ON cg.id = c.class_group_id
          JOIN course_teachers ct ON ct.course_id = c.id
          WHERE ct.user_id::text = $1 AND (ct.unassigned_at IS NULL OR ct.unassigned_at >= NOW())`,
         [String(actor.id)]
-      );
-      rows = res.rows || [];
-    } else if (actor.role === 'ADMIN') {
-      const res = await pool.query(
-        `SELECT c.id, c.code, c.title, c.description, c.class_group_id, cg.code AS class_group_code, c.is_course_chat_enabled, c.created_at, c.updated_at
-         FROM courses c JOIN class_groups cg ON cg.id = c.class_group_id ORDER BY c.title`);
-      rows = res.rows || [];
-    } else {
-      // STUDENT / COORDINATOR default to class group membership
-      if (!actor.classGroupId) return [];
-      const res = await pool.query(
-        `SELECT c.id, c.code, c.title, c.description, c.class_group_id, cg.code AS class_group_code, c.is_course_chat_enabled, c.created_at, c.updated_at
-         FROM courses c JOIN class_groups cg ON cg.id = c.class_group_id
-         WHERE c.class_group_id::text = $1 ORDER BY c.title`,
-        [String(actor.classGroupId)]
-      );
-      rows = res.rows || [];
+      ));
+
+      if (roles.has('STUDENT') && actor.classGroupId) {
+        queries.push(pool.query(
+          `SELECT c.id, c.code, c.title, c.description, c.class_group_id, cg.code AS class_group_code, c.is_course_chat_enabled, c.created_at, c.updated_at
+           FROM courses c JOIN class_groups cg ON cg.id = c.class_group_id
+           WHERE c.class_group_id::text = $1`,
+          [String(actor.classGroupId)]
+        ));
+      }
+
+      const results = await Promise.all(queries);
+      const byId = new Map();
+      for (const result of results) {
+        for (const row of (result.rows || [])) {
+          byId.set(String(row.id), row);
+        }
+      }
+      rows = Array.from(byId.values()).sort((a, b) => String(a.title || '').localeCompare(String(b.title || '')));
     }
 
     const formatted = await Promise.all(rows.map(formatCourse));
@@ -227,6 +240,54 @@ function normalizeAnnouncementTargets(payload = {}) {
     ...departmentIds.map((value) => ({ targetType: 'DEPARTMENT', targetValue: String(value) })),
     ...classGroupIds.map((value) => ({ targetType: 'CLASS_GROUP', targetValue: String(value) }))
   ];
+}
+
+async function getCoordinatorClassGroupIds(userId) {
+  const result = await pool.query(
+    `SELECT id
+     FROM class_groups
+     WHERE coordinator_user_id::text = $1
+     ORDER BY code`,
+    [String(userId)]
+  );
+  return (result.rows || []).map((row) => String(row.id));
+}
+
+async function normalizeGlobalAnnouncementTargetsForActor(actor, payload = {}) {
+  if (String(actor.role || '').toUpperCase() === 'ADMIN') {
+    return { targets: normalizeAnnouncementTargets(payload) };
+  }
+
+  const allowedClassGroupIds = await getCoordinatorClassGroupIds(actor.id);
+  if (!allowedClassGroupIds.length) {
+    return { error: { status: 403, body: { message: 'Coordinator access requires at least one assigned section.' } } };
+  }
+
+  const requestedClassGroupIds = Array.isArray(payload.classGroupIds)
+    ? payload.classGroupIds.map(String)
+    : [];
+
+  const classGroupIds = requestedClassGroupIds.length
+    ? requestedClassGroupIds
+    : allowedClassGroupIds.length === 1
+      ? allowedClassGroupIds
+      : [];
+
+  if (!classGroupIds.length) {
+    return { error: { status: 400, body: { message: 'Choose at least one coordinated section.' } } };
+  }
+
+  const invalidIds = classGroupIds.filter((id) => !allowedClassGroupIds.includes(String(id)));
+  if (invalidIds.length) {
+    return { error: { status: 403, body: { message: 'Coordinators can only target their own sections.' } } };
+  }
+
+  return {
+    targets: classGroupIds.map((targetValue) => ({
+      targetType: 'CLASS_GROUP',
+      targetValue: String(targetValue)
+    }))
+  };
 }
 
 async function listVisibleAnnouncements(user) {
@@ -360,7 +421,9 @@ async function createGlobalAnnouncement(user, payload = {}, files = []) {
     return { status: 400, body: { message: 'title and body are required' } };
   }
 
-  const targets = normalizeAnnouncementTargets(payload);
+  const normalizedTargets = await normalizeGlobalAnnouncementTargetsForActor(actor, payload);
+  if (normalizedTargets.error) return normalizedTargets.error;
+  const targets = normalizedTargets.targets;
   if (!targets.length) {
     return { status: 400, body: { message: 'At least one audience target is required.' } };
   }
@@ -453,7 +516,12 @@ async function updateGlobalAnnouncement(user, announcementId, payload = {}, file
       [String(announcementId), title, body]
     );
 
-    const targets = normalizeAnnouncementTargets(payload);
+    const normalizedTargets = await normalizeGlobalAnnouncementTargetsForActor(actor, payload);
+    if (normalizedTargets.error) return normalizedTargets.error;
+    const targets = normalizedTargets.targets;
+    if (!targets.length) {
+      return { status: 400, body: { message: 'At least one audience target is required.' } };
+    }
     await pool.query(`DELETE FROM announcement_targets WHERE announcement_id::text = $1`, [String(announcementId)]);
     for (const target of targets) {
       await pool.query(
@@ -535,7 +603,7 @@ async function markGlobalAnnouncementRead(userId, announcementId) {
 
 async function createCourseAnnouncement(user, courseId, payload) {
   const actor = await chatService.resolveActor(user);
-  if (!actor || actor.role !== 'TEACHER') {
+  if (!actor) {
     return { status: 403, body: { message: 'Only teachers can publish course announcements.' } };
   }
 
@@ -630,7 +698,7 @@ async function createCourseAnnouncement(user, courseId, payload) {
 
 async function createCourseAnnouncementWithFiles(user, courseId, payload, files) {
   const actor = await chatService.resolveActor(user);
-  if (!actor || actor.role !== 'TEACHER') {
+  if (!actor) {
     return { status: 403, body: { message: 'Only teachers can publish course announcements.' } };
   }
 
@@ -764,7 +832,7 @@ async function markAnnouncementsRead(userId, announcementIds) {
     ).join(', ');
     const params = [String(userId), ...announcementIds.map(String)];
     await pool.query(
-      `INSERT INTO announcement_reads (user_id, announcement_id) VALUES ${values} ON CONFLICT (user_id, announcement_id) DO NOTHING`,
+      `INSERT INTO announcement_reads (user_id, announcement_id) VALUES ${values} ON CONFLICT (announcement_id, user_id) DO NOTHING`,
       params
     );
     emitNotificationRead(userId, { announcementIds: announcementIds.map(String) });
