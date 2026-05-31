@@ -463,6 +463,106 @@ async function assignCourseToClassGroup(courseId, classGroupId, actor = null) {
   return { message: 'Course class group updated' };
 }
 
+async function getDashboardStats() {
+  console.log('getDashboardStats called'); 
+  const [
+    userRoles,
+    courseCount,
+    classGroupCount,
+    coursesWithChat,
+    unassignedStudents,
+    totalMessages,
+  ] = await Promise.all([
+
+    // Count users per role via user_roles + roles join
+    pool.query(`
+      SELECT r.code AS role, COUNT(ur.user_id)::int AS count
+      FROM roles r
+      LEFT JOIN user_roles ur ON ur.role_id = r.id
+      GROUP BY r.code
+    `),
+
+    // Total courses
+    pool.query(`
+      SELECT COUNT(*)::int AS count FROM courses
+    `),
+
+    // Total class groups
+    pool.query(`
+      SELECT COUNT(*)::int AS count FROM class_groups
+    `),
+
+    // Courses with chat enabled
+    pool.query(`
+      SELECT COUNT(*)::int AS count
+      FROM courses
+      WHERE is_course_chat_enabled = true
+    `),
+
+    // Students with no class group assignment
+    // student_profiles.class_group_id is NOT NULL by schema,
+    // but we can catch students who have no student_profile at all
+    pool.query(`
+      SELECT COUNT(*)::int AS count
+      FROM users u
+      INNER JOIN user_roles ur ON ur.user_id = u.id
+      INNER JOIN roles r ON r.id = ur.role_id AND r.code = 'STUDENT'
+      LEFT JOIN student_profiles sp ON sp.user_id = u.id
+      WHERE sp.user_id IS NULL
+    `),
+
+    // Total non-deleted messages
+    pool.query(`
+      SELECT COUNT(*)::int AS count
+      FROM messages
+      WHERE is_deleted = false
+    `),
+  ]);
+
+  const byRole = {};
+  for (const row of userRoles.rows) {
+    byRole[row.role] = row.count;
+  }
+
+  // Uptime
+  const uptimeSeconds = process.uptime();
+  const days    = Math.floor(uptimeSeconds / 86400);
+  const hours   = Math.floor((uptimeSeconds % 86400) / 3600);
+  const minutes = Math.floor((uptimeSeconds % 3600) / 60);
+  const uptime  = days > 0 ? `${days}d ${hours}h`
+                : hours > 0 ? `${hours}h ${minutes}m`
+                : `${minutes}m`;
+
+  // DB heartbeat
+  const dbStart = Date.now();
+  await pool.query('SELECT 1');
+  const dbMs = Date.now() - dbStart;
+  const lastDbSync = dbMs < 1000 ? `${dbMs}ms` : `${(dbMs / 1000).toFixed(1)}s`;
+
+  return {
+    users: {
+      students:     byRole['STUDENT']     ?? 0,
+      teachers:     byRole['TEACHER']     ?? 0,
+      coordinators: byRole['COORDINATOR'] ?? 0,
+      admins:       byRole['ADMIN']       ?? 0,
+    },
+    academic: {
+      courses:            courseCount.rows[0].count,
+      classGroups:        classGroupCount.rows[0].count,
+      coursesWithChat:    coursesWithChat.rows[0].count,
+      unassignedStudents: unassignedStudents.rows[0].count,
+    },
+    activity: {
+      totalMessages: totalMessages.rows[0].count,
+    },
+    system: {
+      uptime,
+      lastDbSync,
+    },
+  };
+}
+
+
 module.exports = {
   getAllUsers,
   getAuditLogs,
@@ -478,5 +578,6 @@ module.exports = {
   createClassGroup,
   createCourse,
   assignUserToClassGroup,
-  assignCourseToClassGroup
+  assignCourseToClassGroup,
+  getDashboardStats
 };
