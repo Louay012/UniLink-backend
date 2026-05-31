@@ -436,7 +436,7 @@ async function markAnnouncementsRead(userId, announcementIds) {
     ).join(', ');
     const params = [String(userId), ...announcementIds.map(String)];
     await pool.query(
-      `INSERT INTO announcement_reads (user_id, announcement_id) VALUES ${values} ON CONFLICT (user_id, announcement_id) DO NOTHING`,
+      `INSERT INTO announcement_reads (user_id, announcement_id) VALUES ${values} ON CONFLICT (announcement_id, user_id) DO NOTHING`,
       params
     );
   } catch (e) {

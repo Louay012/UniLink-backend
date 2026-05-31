@@ -7,11 +7,13 @@ const messageRoutes = require("./message.routes");
 const adminRoutes   = require("./admin.routes");
 const profileRoutes = require("./profile.routes");
 const feedbackRoutes = require("./feedback.routes");
+const announcementRoutes = require("./announcement.routes");
 
 const router = express.Router();
 
 router.use(authRoutes);
 router.use(courseRoutes);
+router.use(announcementRoutes);
 router.use(chatRoutes);
 router.use(messageRoutes);
 router.use(feedbackRoutes);

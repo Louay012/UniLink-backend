@@ -1,5 +1,21 @@
 const pool = require("../config/db");
 
+let chatArchiveColumnReadyPromise = null;
+
+async function ensureChatArchiveColumn() {
+  if (!chatArchiveColumnReadyPromise) {
+    chatArchiveColumnReadyPromise = pool.query(
+      `ALTER TABLE chat_members
+       ADD COLUMN IF NOT EXISTS is_archived BOOLEAN NOT NULL DEFAULT FALSE`
+    ).catch((error) => {
+      chatArchiveColumnReadyPromise = null;
+      throw error;
+    });
+  }
+
+  return chatArchiveColumnReadyPromise;
+}
+
 async function resolveActor(user) {
   if (!user) return null;
 
@@ -320,6 +336,8 @@ async function listUserChats(user, courseId) {
   if (!actor) return [];
 
   try {
+    await ensureChatArchiveColumn();
+
     const params = [String(actor.id)];
     let courseFilter = '';
     if (courseId) {
@@ -366,6 +384,8 @@ async function createOrGetDirectChat(user, targetUserId, initialMessage) {
   }
 
   try {
+    await ensureChatArchiveColumn();
+
     // Look for existing DIRECT chat with both members
     const exists = await pool.query(
       `SELECT c.id, c.chat_type, c.name, c.class_group_id, c.course_id, c.created_by_user_id
@@ -390,6 +410,13 @@ async function createOrGetDirectChat(user, targetUserId, initialMessage) {
       // add members
       await pool.query(`INSERT INTO chat_members (chat_id, user_id, added_by_user_id) VALUES ($1::uuid, $2::uuid, $3::uuid)`, [chatRow.id, actor.id, actor.id]);
       await pool.query(`INSERT INTO chat_members (chat_id, user_id, added_by_user_id) VALUES ($1::uuid, $2::uuid, $3::uuid)`, [chatRow.id, target.id, actor.id]);
+    } else {
+      await pool.query(
+        `UPDATE chat_members
+         SET is_archived = FALSE
+         WHERE chat_id::text = $1 AND user_id::text = $2`,
+        [String(chatRow.id), String(actor.id)]
+      );
     }
 
     if (initialMessage) {
@@ -561,6 +588,8 @@ async function toggleArchiveChat(user, chatId, isArchived) {
   if (!chatId) return { status: 400, body: { message: "Chat ID is required." } };
 
   try {
+    await ensureChatArchiveColumn();
+
     await pool.query(
       `UPDATE chat_members SET is_archived = $1 WHERE chat_id::text = $2 AND user_id::text = $3`,
       [isArchived, String(chatId), String(actor.id)]
@@ -573,6 +602,7 @@ async function toggleArchiveChat(user, chatId, isArchived) {
 }
 
 module.exports = {
+  ensureChatArchiveColumn,
   getUserById,
   canAccessChat,
   formatChatForUser,
