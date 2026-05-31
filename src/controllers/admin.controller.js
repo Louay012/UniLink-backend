@@ -159,7 +159,15 @@ async function assignCourseClassGroup(req, res) {
     res.status(status).json({ error: message });
   }
 }
-
+async function getStats(req, res) {
+  try {
+    const stats = await adminService.getDashboardStats();
+    res.json(stats);
+  } catch (err) {
+    console.error('Dashboard stats error:', err);
+    res.status(500).json({ message: 'Failed to load dashboard stats' });
+  }
+}
 // keep exports explicit and stable
 module.exports = {
   getAllUsers,
@@ -176,5 +184,6 @@ module.exports = {
   createClassGroup,
   assignUserClassGroup,
   assignCourseClassGroup,
-  assignCourse
+  assignCourse,
+  getStats
 };

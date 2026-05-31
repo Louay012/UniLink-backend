@@ -24,7 +24,7 @@ router.get("/admin/users/:id",       adminController.getUserById);
 router.post("/admin/users",          adminController.createUser);
 router.patch("/admin/users/:id/role",adminController.updateUserRole);
 router.delete("/admin/users/:id",    adminController.deleteUser);
-
+router.get('/admin/stats', adminController.getStats);
 router.post('/admin/bulk', upload.single('file'), bulkCreateUsers);
 
 module.exports = router;
