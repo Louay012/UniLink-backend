@@ -269,11 +269,9 @@ async function getAllClassGroups() {
   const res = await pool.query(
     `SELECT cg.id, cg.code, cg.name, cg.department_id, cg.level_id, cg.coordinator_user_id,
             d.code AS department_code, d.name AS department_name,
-            l.code AS level_code, l.name AS level_name,
             u.first_name AS coordinator_first_name, u.last_name AS coordinator_last_name
      FROM class_groups cg
      JOIN departments d ON d.id = cg.department_id
-     JOIN levels l ON l.id = cg.level_id
      LEFT JOIN users u ON u.id = cg.coordinator_user_id
      ORDER BY cg.code`
   );
@@ -295,9 +293,9 @@ async function getAllClassGroups() {
   }));
 }
 
-async function createClassGroup({ code, name, departmentId, levelId, coordinatorUserId = null }, actor = null) {
-  if (!code || !name || !departmentId || !levelId) {
-    throw new Error("code, name, departmentId and levelId are required");
+async function createClassGroup({ code, name, departmentId, coordinatorUserId }, actor = null) {
+  if (!code || !name || !departmentId ) {
+    throw new Error("code, name, departmentId and coordinatorUserId are required");
   }
 
   const normalizedCode = String(code).trim().toUpperCase();
@@ -306,39 +304,24 @@ async function createClassGroup({ code, name, departmentId, levelId, coordinator
   const dept = await pool.query(`SELECT id FROM departments WHERE id::text = $1 LIMIT 1`, [String(departmentId)]);
   if (!dept.rows.length) throw new Error("Invalid departmentId");
 
-  const lvl = await pool.query(`SELECT id FROM levels WHERE id::text = $1 LIMIT 1`, [String(levelId)]);
-  if (!lvl.rows.length) throw new Error("Invalid levelId");
 
-  if (coordinatorUserId) {
-    const coordRole = await pool.query(
-      `SELECT 1
-       FROM user_roles ur
-       JOIN roles r ON r.id = ur.role_id
-       WHERE ur.user_id::text = $1 AND r.code = 'COORDINATOR'
-       LIMIT 1`,
-      [String(coordinatorUserId)]
-    );
-    if (!coordRole.rows.length) {
-      throw new Error("coordinatorUserId must reference a COORDINATOR user");
-    }
-  }
+
 
   const exists = await pool.query(`SELECT id FROM class_groups WHERE code = $1 LIMIT 1`, [normalizedCode]);
   if (exists.rows.length) throw new Error("Class group code already exists");
 
   const insert = await pool.query(
-    `INSERT INTO class_groups (code, name, department_id, level_id, coordinator_user_id)
-     VALUES ($1, $2, $3::uuid, $4::uuid, $5::uuid)
-     RETURNING id, code, name, department_id, level_id, coordinator_user_id`,
-    [normalizedCode, normalizedName, String(departmentId), String(levelId), coordinatorUserId ? String(coordinatorUserId) : null]
+    `INSERT INTO class_groups (code, name, department_id, coordinator_user_id)
+     VALUES ($1, $2, $3::uuid, $4::uuid)
+     RETURNING id, code, name, department_id, coordinator_user_id`,
+    [normalizedCode, normalizedName, String(departmentId), coordinatorUserId ? String(coordinatorUserId) : null]
   );
 
   const row = insert.rows[0];
   await recordAdminAuditLog(actor, "ADMIN_CLASS_GROUP_CREATED", "class_group", row.id, {
     code: row.code,
     name: row.name,
-    departmentId: row.department_id,
-    levelId: row.level_id,
+    departmentId: row.department_id,  
     coordinatorUserId: row.coordinator_user_id
   });
   return {
@@ -346,7 +329,6 @@ async function createClassGroup({ code, name, departmentId, levelId, coordinator
     code: row.code,
     name: row.name,
     departmentId: row.department_id,
-    levelId: row.level_id,
     coordinatorUserId: row.coordinator_user_id
   };
 }

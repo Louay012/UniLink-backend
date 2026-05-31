@@ -12,6 +12,7 @@ router.use("/admin", requireAdmin);
 router.get("/admin/users",           adminController.getAllUsers);
 router.get("/admin/audit-logs",      adminController.getAuditLogs);
 router.get("/admin/courses",         adminController.getAllCourses);
+router.get("/admin/coursesinfo",         adminController.getAllCoursesinfo);
 router.post("/admin/courses",        adminController.createCourse);
 router.get("/admin/departments",     adminController.getAllDepartments);
 router.get("/admin/levels",          adminController.getAllLevels);

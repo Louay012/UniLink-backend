@@ -80,6 +80,17 @@ async function getAllCourses(req, res) {
     res.status(500).json({ error: err.message });
   }
 }
+async function getAllCoursesinfo(req, res) {
+  try {
+    const result = await pool.query(`select c.id, c.code, c.title, c.is_course_chat_enabled ,cg.code as class_group, cg.name
+from courses c left join class_groups cg on c.class_group_id = cg.id
+;`);
+    res.json(result.rows);
+  } catch (err) {
+    console.error('[admin] getAllCoursesinfo failed', err.message);
+    res.status(500).json({ error: err.message });
+  }
+}
 
 async function createCourse(req, res) {
   try {
@@ -185,5 +196,6 @@ module.exports = {
   assignUserClassGroup,
   assignCourseClassGroup,
   assignCourse,
-  getStats
+  getStats,
+  getAllCoursesinfo
 };
