@@ -1,4 +1,5 @@
 const { bulkInsertUsers } = require('../services/bulkUser.service');
+const { recordAdminAuditLog } = require('../services/admin.service');
 
 
 async function bulkCreateUsers(req, res) {
@@ -12,6 +13,14 @@ async function bulkCreateUsers(req, res) {
     const hasProblems = result.failed > 0 || result.duplicates.length > 0;
     const status      = result.inserted === 0 ? 400 : hasProblems ? 207 : 201;
     // 201 = all good, 207 = partial success, 400 = nothing inserted
+
+    await recordAdminAuditLog(req.user, 'ADMIN_BULK_USERS_IMPORTED', 'user_batch', null, {
+      fileName: req.file.originalname,
+      total: result.total ?? result.inserted + result.failed + result.duplicates.length,
+      inserted: result.inserted,
+      failed: result.failed,
+      duplicates: result.duplicates.length,
+    });
 
     return res.status(status).json({
       success: result.inserted > 0,

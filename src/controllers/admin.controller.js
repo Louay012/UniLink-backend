@@ -83,7 +83,7 @@ async function getAllCourses(req, res) {
 
 async function createCourse(req, res) {
   try {
-    const created = await adminService.createCourse(req.body || {});
+    const created = await adminService.createCourse(req.body || {}, req.user);
     res.status(201).json(created);
   } catch (err) {
     const message = String(err.message || 'Failed to create course');
@@ -121,7 +121,7 @@ async function getAllClassGroups(req, res) {
 
 async function createClassGroup(req, res) {
   try {
-    const created = await adminService.createClassGroup(req.body || {});
+    const created = await adminService.createClassGroup(req.body || {}, req.user);
     res.status(201).json(created);
   } catch (err) {
     const message = String(err.message || 'Failed to create class group');
@@ -136,7 +136,7 @@ async function assignUserClassGroup(req, res) {
   if (!classGroupId) return res.status(400).json({ error: 'classGroupId is required' });
 
   try {
-    const result = await adminService.assignUserToClassGroup(userId, classGroupId);
+    const result = await adminService.assignUserToClassGroup(userId, classGroupId, req.user);
     res.json(result);
   } catch (err) {
     const message = String(err.message || 'Failed to assign class group');
@@ -151,7 +151,7 @@ async function assignCourseClassGroup(req, res) {
   if (!classGroupId) return res.status(400).json({ error: 'classGroupId is required' });
 
   try {
-    const result = await adminService.assignCourseToClassGroup(courseId, classGroupId);
+    const result = await adminService.assignCourseToClassGroup(courseId, classGroupId, req.user);
     res.json(result);
   } catch (err) {
     const message = String(err.message || 'Failed to assign course class group');

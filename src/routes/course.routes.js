@@ -11,6 +11,28 @@ const upload = multer({
   }
 });
 
+// ── Global announcements (static paths BEFORE :courseId) ──
+router.get("/announcements", courseController.getGlobalAnnouncements);
+router.get("/announcements/audience-options", courseController.getAnnouncementAudienceOptions);
+router.post("/announcements", (req, res) => {
+  upload.array("files", 5)(req, res, (err) => {
+    if (err) {
+      req.fileValidationError = err;
+    }
+    return courseController.createGlobalAnnouncement(req, res);
+  });
+});
+router.put("/announcements/:announcementId", (req, res) => {
+  upload.array("files", 5)(req, res, (err) => {
+    if (err) {
+      req.fileValidationError = err;
+    }
+    return courseController.updateGlobalAnnouncement(req, res);
+  });
+});
+router.delete("/announcements/:announcementId", courseController.deleteGlobalAnnouncement);
+router.post("/announcements/:announcementId/read", courseController.markGlobalAnnouncementRead);
+
 // ── Announcement read tracking (static paths BEFORE :courseId) ──
 router.get("/announcements/read-ids", courseController.getReadIds);
 router.get("/announcements/unread-counts", courseController.getUnreadCounts);

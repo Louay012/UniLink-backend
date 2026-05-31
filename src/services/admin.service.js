@@ -295,7 +295,7 @@ async function getAllClassGroups() {
   }));
 }
 
-async function createClassGroup({ code, name, departmentId, levelId, coordinatorUserId = null }) {
+async function createClassGroup({ code, name, departmentId, levelId, coordinatorUserId = null }, actor = null) {
   if (!code || !name || !departmentId || !levelId) {
     throw new Error("code, name, departmentId and levelId are required");
   }
@@ -334,6 +334,13 @@ async function createClassGroup({ code, name, departmentId, levelId, coordinator
   );
 
   const row = insert.rows[0];
+  await recordAdminAuditLog(actor, "ADMIN_CLASS_GROUP_CREATED", "class_group", row.id, {
+    code: row.code,
+    name: row.name,
+    departmentId: row.department_id,
+    levelId: row.level_id,
+    coordinatorUserId: row.coordinator_user_id
+  });
   return {
     id: row.id,
     code: row.code,
@@ -344,7 +351,7 @@ async function createClassGroup({ code, name, departmentId, levelId, coordinator
   };
 }
 
-async function createCourse({ code, title, description = '', classGroupId, isCourseChatEnabled = true, teacherUserId = null }) {
+async function createCourse({ code, title, description = '', classGroupId, isCourseChatEnabled = true, teacherUserId = null }, actor = null) {
   if (!code || !title || !classGroupId) {
     throw new Error('code, title and classGroupId are required');
   }
@@ -389,6 +396,14 @@ async function createCourse({ code, title, description = '', classGroupId, isCou
     );
   }
 
+  await recordAdminAuditLog(actor, "ADMIN_COURSE_CREATED", "course", row.id, {
+    code: row.code,
+    title: row.title,
+    classGroupId: row.class_group_id,
+    isCourseChatEnabled: row.is_course_chat_enabled,
+    teacherUserId: teacherUserId ? String(teacherUserId) : null
+  });
+
   return {
     id: row.id,
     code: row.code,
@@ -399,7 +414,7 @@ async function createCourse({ code, title, description = '', classGroupId, isCou
   };
 }
 
-async function assignUserToClassGroup(userId, classGroupId) {
+async function assignUserToClassGroup(userId, classGroupId, actor = null) {
   if (!userId || !classGroupId) {
     throw new Error('userId and classGroupId are required');
   }
@@ -415,14 +430,22 @@ async function assignUserToClassGroup(userId, classGroupId) {
   const profile = await pool.query(`SELECT user_id FROM student_profiles WHERE user_id::text = $1 LIMIT 1`, [String(userId)]);
   if (profile.rows.length) {
     await pool.query(`UPDATE student_profiles SET class_group_id = $1::uuid WHERE user_id::text = $2`, [String(classGroupId), String(userId)]);
+    await recordAdminAuditLog(actor, "ADMIN_CLASS_GROUP_ASSIGNED", "class_group", classGroupId, {
+      userId: String(userId),
+      result: "student_class_group_updated"
+    });
     return { message: 'Student class group updated' };
   }
 
   await pool.query(`INSERT INTO student_profiles (user_id, class_group_id) VALUES ($1::uuid, $2::uuid)`, [String(userId), String(classGroupId)]);
+  await recordAdminAuditLog(actor, "ADMIN_CLASS_GROUP_ASSIGNED", "class_group", classGroupId, {
+    userId: String(userId),
+    result: "student_profile_created"
+  });
   return { message: 'Student profile created and class group assigned' };
 }
 
-async function assignCourseToClassGroup(courseId, classGroupId) {
+async function assignCourseToClassGroup(courseId, classGroupId, actor = null) {
   if (!courseId || !classGroupId) {
     throw new Error('courseId and classGroupId are required');
   }
@@ -434,12 +457,16 @@ async function assignCourseToClassGroup(courseId, classGroupId) {
   if (!course.rows.length) throw new Error('Course not found');
 
   await pool.query(`UPDATE courses SET class_group_id = $1::uuid, updated_at = NOW() WHERE id::text = $2`, [String(classGroupId), String(courseId)]);
+  await recordAdminAuditLog(actor, "ADMIN_COURSE_CLASS_GROUP_ASSIGNED", "course", courseId, {
+    classGroupId: String(classGroupId)
+  });
   return { message: 'Course class group updated' };
 }
 
 module.exports = {
   getAllUsers,
   getAuditLogs,
+  recordAdminAuditLog,
   getUserById,
   createUser,
   updateUserRole,
